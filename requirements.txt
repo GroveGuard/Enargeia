@@ -1,0 +1,12 @@
+neo4j>=5.20,<7
+requests>=2.31
+python-dotenv>=1.0
+charset-normalizer>=3.3
+pymupdf>=1.24
+python-docx>=1.1
+openpyxl>=3.1
+python-pptx>=0.6.23
+beautifulsoup4>=4.12
+PyYAML>=6.0
+mcp>=1.9,<2
+flet>=0.82.2
