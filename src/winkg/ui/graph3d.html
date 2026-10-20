@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neo4j Company Knowledge Graph · 3D</title>
+<style>
+:root{color-scheme:dark;--bg:#050b14;--panel:#0c1927;--panel2:#102234;--line:#1a3449;--muted:#8da5bb;--text:#e8f1fb;--teal:#42e2c5;--blue:#58a9ff;--amber:#ffb75f;--violet:#ba91ff;--rose:#f28cd9}
+*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--text);font:13px/1.4 "Segoe UI",Inter,system-ui,sans-serif}button,input{font:inherit}button{color:var(--text);border:1px solid #204158;background:linear-gradient(180deg,#102638,#0b1a28);border-radius:10px;padding:9px 12px;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}button:hover{border-color:#42e2c5;background:#123248}button:active{transform:translateY(1px)}button:disabled{opacity:.36;cursor:default}button.primary{background:linear-gradient(105deg,#00bda8,#31d8c1);border-color:#4ae8d1;color:#03201f;font-weight:700}button.active{border-color:var(--teal);box-shadow:inset 0 0 0 1px #42e2c533;background:#10343d;color:#7ef2df}button.icon{width:40px;height:40px;padding:0;font-size:17px}
+.app{height:100%;display:flex;flex-direction:column;background:radial-gradient(ellipse at 48% 43%,#0a1a29 0,#06111e 45%,#040a12 100%)}
+.topbar{height:60px;flex:0 0 60px;display:flex;align-items:center;gap:14px;padding:0 22px;border-bottom:1px solid #183146;background:linear-gradient(90deg,#071522ee,#0b1725ee)}.brandmark{width:34px;height:34px;border-radius:11px;background:linear-gradient(135deg,#1de0c1,#63b5ff);display:grid;place-items:center;color:#02202a;font-size:19px;font-weight:900;box-shadow:0 0 24px #2adbc533}.brand{font-size:14px;font-weight:750;letter-spacing:.1px}.crumb{font-size:10px;color:var(--teal);letter-spacing:1.6px;text-transform:uppercase}.topmeta{margin-left:auto;display:flex;align-items:center;gap:10px}.livepill{display:flex;align-items:center;gap:8px;background:#0f2635;border:1px solid #1b4151;color:#65e9d3;border-radius:30px;padding:8px 12px;font-size:11px}.dot{width:7px;height:7px;background:var(--teal);border-radius:50%;box-shadow:0 0 12px var(--teal)}
+.main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 322px;gap:14px;padding:14px 16px 15px}.stage{min-width:0;min-height:0;display:flex;flex-direction:column;gap:10px}.toolbar{display:flex;align-items:center;gap:8px;min-height:46px;flex-wrap:wrap;position:relative;z-index:2}.galaxy-title{display:flex;align-items:center;gap:10px;padding:0 9px 0 2px;min-width:190px}.galaxy-title strong{display:block;font-size:12px;color:#e8f1fb}.galaxy-title small{display:block;font-size:10px;color:#7895ad;margin-top:2px}.galaxy-pulse{width:9px;height:9px;border-radius:50%;background:var(--teal);box-shadow:0 0 15px var(--teal);flex:0 0 9px}.filters{display:flex;gap:5px;flex-wrap:wrap}.filter{padding:8px 10px;font-size:11px;color:#9cb4c9}.tools{display:flex;gap:5px;margin-left:auto}.viewport{position:relative;flex:1;min-height:320px;overflow:hidden;border:1px solid #12354a;border-radius:13px;background:radial-gradient(ellipse at 51% 47%,#10263b 0,#071522 51%,#040a13 100%);box-shadow:inset 0 0 60px #0008,0 12px 45px #0003}.viewport:after{content:"";pointer-events:none;position:absolute;inset:0;background:linear-gradient(130deg,#56b8f60a,transparent 35%,transparent 70%,#37e4cc07);border-radius:inherit}.viewport canvas{display:block;width:100%;height:100%;outline:none}.labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}.node-label{position:absolute;pointer-events:auto;border:1px solid #1d4158;background:#06131ee6;color:#dcecfb;border-radius:6px;padding:3px 7px;font-size:10px;white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;backdrop-filter:blur(6px);box-shadow:0 3px 12px #0005;transform:translate(8px,-50%)}.node-label:hover,.node-label.selected{border-color:var(--teal);color:#7af1de;box-shadow:0 0 18px #2de2c533}.node-label.hidden{display:none}.viewhint{position:absolute;left:14px;top:13px;padding:7px 9px;border-radius:7px;background:#071521c9;border:1px solid #1a3548;color:#9eb5c9;font-size:10px;pointer-events:none}.axis{position:absolute;bottom:18px;left:20px;width:80px;height:65px;pointer-events:none;opacity:.8}.footer{min-height:38px;border:1px solid #17384d;border-radius:10px;background:#081825;display:flex;align-items:center;gap:17px;padding:8px 13px;color:#9bb3c7;font-size:11px;flex-wrap:wrap}.footstat{display:flex;align-items:center;gap:7px}.footstat b{font-size:12px;color:#e5f3fe}.status-live{margin-left:auto;display:flex;align-items:center;gap:7px;color:#65e6d0}.status-live .dot{width:6px;height:6px}
+.inspector{min-width:0;min-height:0;border:1px solid #1b3c52;border-radius:13px;background:linear-gradient(160deg,#0d1e2e,#081521 90%);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 15px 40px #0003}.inspect-head{padding:16px;border-bottom:1px solid #183448;background:#0e2131}.inspect-overline{font-size:9px;color:var(--teal);letter-spacing:1.5px;text-transform:uppercase;font-weight:700;margin-bottom:10px}.nodeheading{display:flex;gap:10px;align-items:flex-start}.nodeglyph{width:42px;height:42px;flex:0 0 42px;border-radius:12px;background:#0d403f;border:1px solid #217a72;display:grid;place-items:center;color:var(--teal);font-size:18px}.node-title{font-size:16px;font-weight:750;line-height:1.25;overflow-wrap:anywhere}.typebadge{display:inline-block;font-size:10px;color:#9bbdd1;background:#142f42;border:1px solid #22445a;border-radius:20px;padding:3px 8px;margin-top:6px}.inspect-body{padding:15px;overflow:auto;flex:1;min-height:0}.field{margin-bottom:13px}.fieldlabel{color:#83a4bd;font-size:11px;margin-bottom:5px}.fieldvalue{font-size:12px;line-height:1.45;overflow-wrap:anywhere;color:#d6e7f7}.divider{height:1px;background:#1b3548;margin:13px 0}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}.metric{background:#0c2232;border:1px solid #19394c;border-radius:9px;padding:10px}.metric span{display:block;color:#86a6bc;font-size:10px}.metric b{display:block;font-size:20px;margin-top:4px}.taglist{display:flex;gap:6px;flex-wrap:wrap}.tag{border:1px solid #25475b;border-radius:20px;padding:4px 8px;font-size:10px;color:#add2e8;background:#0b2030}.relations{display:flex;flex-direction:column;gap:0}.relation{display:flex;align-items:center;gap:8px;border-bottom:1px solid #142e40;padding:9px 0;font-size:11px}.relation .rtype{color:#9ab4c9;flex:1}.relation .count{color:#e4f1fc;font-weight:700}.inspect-actions{padding:13px 15px;border-top:1px solid #183448;display:flex;flex-direction:column;gap:8px}.inspect-actions button{width:100%;text-align:center}.inspect-actions button.secondary{background:#0a1926;border-color:#1a3548;color:#95afc4}.empty-inspector{padding:24px 16px;color:var(--muted);text-align:center;line-height:1.7}.err{padding:12px;border:1px solid #7c353e;background:#2c141c;border-radius:8px;color:#ffb2bd;font-size:11px;white-space:pre-wrap}.toast{position:absolute;z-index:10;left:50%;bottom:58px;transform:translateX(-50%);padding:10px 15px;border-radius:10px;border:1px solid #2d6570;background:#0e2b35;color:#a3f5e7;box-shadow:0 10px 30px #0008;display:none;max-width:90%;font-size:11px}.toast.show{display:block}.loading{opacity:.6;pointer-events:none}
+@media(max-width:1050px){.main{grid-template-columns:minmax(0,1fr) 270px;padding:9px;gap:9px}.topbar{padding:0 13px}.filter{padding:7px;font-size:10px}.tools button{width:34px;height:36px}}
+@media(max-width:760px){.main{grid-template-columns:1fr;grid-template-rows:minmax(360px,1fr) auto;overflow:auto}.inspector{max-height:40vh}.toolbar{align-items:flex-start}.tools{margin-left:0}.viewport{min-height:380px}.status-live{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="app">
+ <header class="topbar">
+  <div class="brandmark">✣</div><div><div class="brand">Company Knowledge Graph</div><div class="crumb">3D Graph Explorer · Neo4j</div></div>
+  <div class="topmeta"><div class="livepill"><span class="dot"></span><span id="connectionLabel">Lokale 3D-Ansicht</span></div><button class="icon" id="btnRefresh" title="Gesamten Datenbestand neu laden">↻</button></div>
+ </header>
+ <div class="main">
+  <section class="stage">
+   <div class="toolbar">
+    <div class="galaxy-title"><span class="galaxy-pulse"></span><div><strong>Gesamte Datenbank</strong><small>Alle Knoten und Beziehungen der Neo4j-Datenbank</small></div></div>
+    <div class="filters">
+     <button class="filter active" data-kind="all">Alle</button><button class="filter active" data-kind="root">Roots</button><button class="filter active" data-kind="folder">Ordner</button><button class="filter active" data-kind="file">Dateien</button><button class="filter active" data-kind="chunk">Text</button><button class="filter active" data-kind="entity">Entitäten</button><button class="filter active" data-kind="knowledge">Wissen</button><button class="filter active" data-kind="system">System</button><button class="filter active" data-kind="other">Sonstige</button>
+    </div>
+    <div class="tools"><button class="icon" id="btnPause" title="Animation pausieren">Ⅱ</button><button class="icon" id="btnFit" title="Graph einpassen">⛶</button><button class="icon" id="btnZoomIn" title="Vergrößern">＋</button><button class="icon" id="btnZoomOut" title="Verkleinern">－</button><button class="icon" id="btnReset" title="Ansicht zurücksetzen">⟳</button></div>
+   </div>
+   <div class="viewport" id="viewport">
+    <canvas id="glCanvas" aria-label="Dreidimensionaler Knowledge Graph"></canvas><div class="labels" id="labels"></div>
+    <div class="viewhint">Ziehen: 3D drehen · Rechts ziehen: verschieben · Mausrad: Zoom · Knoten: auswählen</div>
+    <div class="toast" id="toast"></div>
+   </div>
+   <footer class="footer">
+    <div class="footstat"><span style="color:var(--teal)">✣</span><b id="nodeCount">0</b><span>Knoten</span></div><div class="footstat"><b id="edgeCount">0</b><span>Beziehungen</span></div><div class="footstat"><b id="loadedCount">0</b><span>Gesamtbestand geladen</span></div>
+    <div class="status-live"><span class="dot"></span><span>Live-Ansicht</span></div><span id="updatedAt">Warte auf Graphdaten …</span>
+   </footer>
+  </section>
+  <aside class="inspector">
+   <div class="inspect-head"><div class="inspect-overline">Ausgewählter Knoten</div><div class="nodeheading"><div class="nodeglyph" id="nodeGlyph">✣</div><div style="min-width:0;flex:1"><div class="node-title" id="nodeTitle">Graph wird geladen …</div><span class="typebadge" id="nodeType">Knowledge Graph</span></div></div></div>
+   <div class="inspect-body" id="inspectBody"><div class="empty-inspector">Wähle einen Knoten in der 3D-Ansicht, um Eigenschaften, Quellen und Verknüpfungen zu sehen.</div></div>
+   <div class="inspect-actions"><button class="primary" id="btnFocus">◎ Im Graph zentrieren</button><button id="btnExpand">✧ Umfeld hervorheben</button><button id="btnDetails">▣ Im Windows-Explorer öffnen</button><button class="secondary" id="btnClearSelection" disabled>Auswahl aufheben</button></div>
+  </aside>
+ </div>
+</div>
+<script>
+'use strict';
+(() => {
+ const $ = (id) => document.getElementById(id);
+ const canvas = $('glCanvas'), viewport = $('viewport'), labelsHost = $('labels');
+ const ctx = canvas.getContext('webgl', {alpha:true, antialias:true, premultipliedAlpha:false});
+ const TYPE = {
+   root:{label:'Root',color:'#55e2c4',glyph:'⌂'}, folder:{label:'Ordner',color:'#36dfbd',glyph:'▱'},
+   file:{label:'Datei',color:'#39dfc3',glyph:'▤'}, chunk:{label:'Textabschnitt',color:'#58aaff',glyph:'▤'},
+   entity:{label:'Entität',color:'#ffb75f',glyph:'◎'}, knowledge:{label:'Wissensknoten',color:'#b99aff',glyph:'✣'},
+   system:{label:'Systemknoten',color:'#f28cd9',glyph:'⚙'}, other:{label:'Sonstiger Knoten',color:'#8ca6bf',glyph:'◇'},
+   related:{label:'Verknüpfte Datei',color:'#b99aff',glyph:'⌘'}
+ };
+ const EDGE = {structure:'#31d7c0',content:'#58aaff',entity:'#ffb75f',shared:'#b99aff',knowledge:'#df8eea',other:'#7790a8'};
+ let currentVersion = '', payload = null, nodes = [], links = [], byId = new Map(), labels = new Map(), selected = null;
+ let yaw = -0.25, pitch = 0.18, cameraDistance = 680, paused = false, simAlpha = 1, lastFrame = 0, frame = 0, pointer = null, lastClickTime = 0, panX = 0, panY = 0;
+ let cameraTargetId = '', cameraTarget = {x:0, y:0, z:0};
+ let enabledKinds = new Set(Object.keys(TYPE)), errorShown = false, galaxyScale = 180, adjacency = new Map(), showNeighborhood = false, neighborhoodIds = new Set(), fullLoadInFlight = false, requestedLoadVersion = '';
+ const PI = Math.PI;
+ const toColor = (hex, alpha=1) => { const h=hex.replace('#',''); return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255,alpha]; };
+ function seeded(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0)/4294967295;}
+ function randRange(a,b,r){return a+(b-a)*r;}
+ function initializePositions(){
+   const count=Math.max(1,nodes.length);galaxyScale=Math.max(180,Math.cbrt(count)*48);
+   const centers={
+     root:[0,0,0],folder:[-.36*galaxyScale,.06*galaxyScale,.04*galaxyScale],
+     file:[-.16*galaxyScale,.1*galaxyScale,-.17*galaxyScale],chunk:[0,.3*galaxyScale,.08*galaxyScale],
+     entity:[.35*galaxyScale,.02*galaxyScale,.02*galaxyScale],knowledge:[.24*galaxyScale,-.26*galaxyScale,-.18*galaxyScale],
+     system:[-.18*galaxyScale,-.29*galaxyScale,.18*galaxyScale],other:[.02*galaxyScale,-.12*galaxyScale,.32*galaxyScale],
+     related:[-.28*galaxyScale,.22*galaxyScale,-.08*galaxyScale]
+   };
+   nodes.forEach((n,i)=>{
+     const c=centers[n.kind]||centers.other,theta=seeded(n.id+'theta')*PI*2,cosPhi=seeded(n.id+'phi')*2-1,sinPhi=Math.sqrt(Math.max(0,1-cosPhi*cosPhi));
+     const radius=galaxyScale*(.12+.72*Math.sqrt(seeded(n.id+'radius')));
+     n.x=c[0]+Math.cos(theta)*sinPhi*radius;n.y=c[1]+cosPhi*radius;n.z=c[2]+Math.sin(theta)*sinPhi*radius;
+     n.vx=randRange(-.22,.22,seeded(n.id+'vx'));n.vy=randRange(-.22,.22,seeded(n.id+'vy'));n.vz=randRange(-.22,.22,seeded(n.id+'vz'));n.degree=0;
+   });
+   adjacency=new Map(nodes.map(n=>[n.id,[]]));
+   links.forEach(l=>{l.s=byId.get(l.source);l.t=byId.get(l.target);if(l.s&&l.t){l.s.degree++;l.t.degree++;adjacency.get(l.s.id)?.push(l);adjacency.get(l.t.id)?.push(l);}});
+   let maxD=1;for(const n of nodes)maxD=Math.max(maxD,n.degree);
+   nodes.forEach(n=>{n.val=n.degree?Math.max(2.2,2.2+Math.sqrt(n.degree/maxD)*7):2.2;n.col=toColor(n.color||TYPE[n.kind]?.color||'#8ca6bf',.95);});
+   simAlpha=1;showNeighborhood=false;neighborhoodIds.clear();
+   selected=byId.get(dataSelectedId())||null;
+   cameraTargetId='';cameraTarget={x:0,y:0,z:0};
+ }
+ function dataSelectedId(){return String(payload?.stats?.selected_node_id||'');}
+ function normaliseGraph(data){
+   payload=data||{};currentVersion=String(data.version||'');
+   nodes=(data.nodes||[]).map((n,i)=>({...n,id:String(n.id||`node-${i}`),label:String(n.label||n.name||'Knoten'),kind:TYPE[n.kind]?n.kind:'other',path:String(n.path||''),detail:String(n.detail||''),color:n.color||TYPE[n.kind]?.color||'#8ca6bf'}));
+   byId=new Map(nodes.map(n=>[n.id,n]));
+   links=(data.links||[]).map((l,i)=>({id:`link-${i}`,source:String(typeof l.source==='object'?l.source.id:l.source),target:String(typeof l.target==='object'?l.target.id:l.target),kind:EDGE[l.kind]?l.kind:'other',relationType:String(l.type||l.kind||'Beziehung'),color:EDGE[l.kind]||EDGE.other})).filter(l=>byId.has(l.source)&&byId.has(l.target));
+   initializePositions();
+   $('nodeCount').textContent=nodes.length.toLocaleString('de-DE');$('edgeCount').textContent=links.length.toLocaleString('de-DE');
+   $('loadedCount').textContent=data.loaded===false?'…':nodes.length.toLocaleString('de-DE');
+   $('updatedAt').textContent=data.loaded===false?'Lade vollständigen Graphen …':'Aktualisiert '+new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+   $('connectionLabel').textContent=data.scope==='database'?'Gesamte Neo4j-Datenbank':(data.root?.name||'Neo4j Graph');
+   $('btnRefresh').disabled=data.loaded===false;
+   buildLabels();updateInspector();fitCamera();
+   if(data.loaded===false){$('nodeTitle').textContent='Gesamte Datenbank wird geladen …';$('nodeType').textContent='Neo4j · Globaler Snapshot';$('inspectBody').innerHTML='<div class="empty-inspector">Alle Knoten und Beziehungen werden aus Neo4j geladen. Die 3D-Galaxie erscheint, sobald der Snapshot bereitsteht.</div>';showToast('Lade die vollständige Datenbankgalaxie …');}
+   else showToast('Gesamte Datenbank geladen · '+nodes.length.toLocaleString('de-DE')+' Knoten');
+ }
+ function addLabel(n){
+   if(!n||labels.has(n.id))return;
+   const limit=showNeighborhood?250:105;
+   if(labels.size>=limit){
+     let candidate=null;
+     for(const [id,el] of labels){
+       const item=byId.get(id);
+       const protectedNode=item&&(item===selected||(showNeighborhood&&neighborhoodIds.has(item.id)));
+       if(item&&!protectedNode&&(!candidate||labelPriority(item)<labelPriority(candidate.node)))candidate={id,el,node:item};
+     }
+     if(candidate){candidate.el.remove();labels.delete(candidate.id);}
+   }
+   if(labels.size>=limit)return;
+   const el=document.createElement('button');el.className='node-label';el.textContent=n.label;el.title=n.label+(n.detail?'\n'+n.detail:'');el.addEventListener('click',ev=>{ev.stopPropagation();selectNode(n,true)});labelsHost.appendChild(el);labels.set(n.id,el);
+ }
+ function labelPriority(n){
+   if(!n)return -1e9;
+   const kindPriority={root:90,folder:76,file:72,entity:66,knowledge:60,system:45,other:38,chunk:18,related:52};
+   const degree=Math.log2(Math.max(0,Number(n.degree)||0)+1)*12;
+   const named=n.label&&n.label!=='Knoten'&&n.label!=='(ohne Namen)'?12:0;
+   const path=n.path?5:0;
+   return (kindPriority[n.kind]||30)+degree+named+path+(selected===n?10000:0);
+ }
+ function buildLabels(){
+   labelsHost.innerHTML='';labels.clear();
+   if(showNeighborhood){
+     // In highlight mode label only the selected node and its direct neighbors.
+     Array.from(neighborhoodIds).map(id=>byId.get(id)).filter(Boolean)
+       .sort((a,b)=>labelPriority(b)-labelPriority(a)).slice(0,250).forEach(addLabel);
+     return;
+   }
+   // In galaxy mode prefer meaningful anchors; chunks are labelled only when selected.
+   nodes.filter(n=>n.kind!=='chunk').sort((a,b)=>labelPriority(b)-labelPriority(a)).slice(0,105).forEach(addLabel);
+   addLabel(selected);
+ }
+ function activeNode(n){return enabledKinds.has(n.kind);}
+ function selectNode(node, focus=false){selected=node||null;showNeighborhood=false;neighborhoodIds.clear();if(focus&&selected)focusNode(selected);buildLabels();updateInspector();labels.forEach((el,id)=>el.classList.toggle('selected',!!selected&&id===selected.id));}
+ function clearSelection(){
+   if(selected&&cameraTargetId===selected.id){cameraTarget={x:selected.x,y:selected.y,z:selected.z};cameraTargetId='';}
+   selected=null;showNeighborhood=false;neighborhoodIds.clear();buildLabels();updateInspector();
+   showToast('Knotenauswahl aufgehoben.');
+ }
+ function safeText(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+ function updateInspector(){
+   const n=selected;if(!n){$('nodeTitle').textContent='Gesamte Galaxie';$('nodeType').textContent='Keine Knotenauswahl';$('nodeGlyph').textContent='✣';$('inspectBody').innerHTML='<div class="empty-inspector">Die vollständige Datenbank ist sichtbar. Klicke einen Knoten an, um Details zu sehen, oder erkunde die Galaxie ohne Auswahl.</div>';$('btnExpand').disabled=true;$('btnFocus').disabled=true;$('btnDetails').disabled=true;$('btnClearSelection').disabled=true;$('btnClearSelection').textContent='Keine Auswahl';return;}
+   const meta=TYPE[n.kind]||TYPE.related;$('nodeGlyph').textContent=meta.glyph;$('nodeGlyph').style.color=meta.color;$('nodeGlyph').style.borderColor=meta.color+'88';$('nodeGlyph').style.background=meta.color+'18';$('nodeTitle').textContent=n.label;$('nodeType').textContent=meta.label;$('nodeType').style.borderColor=meta.color+'66';
+   const shared=(n.detail||'').match(/Gemeinsame Entitäten:\s*(.*)/i)?.[1];
+   let html='';
+   html+=`<div class="field"><div class="fieldlabel">Beschreibung</div><div class="fieldvalue">${safeText(n.detail||'Keine zusätzliche Beschreibung vorhanden.')}</div></div>`;if(Array.isArray(n.labels)&&n.labels.length)html+=`<div class="field"><div class="fieldlabel">Neo4j-Labels</div><div class="taglist">${n.labels.map(label=>`<span class="tag">${safeText(label)}</span>`).join('')}</div></div>`;
+   if(n.path)html+=`<div class="field"><div class="fieldlabel">Pfad / Quelle</div><div class="fieldvalue">${safeText(n.path)}</div></div>`;
+   html+=`<div class="divider"></div><div class="metrics"><div class="metric"><span>Verbindungen</span><b>${n.degree||0}</b></div><div class="metric"><span>Knotentyp</span><b style="font-size:13px;color:${meta.color}">${meta.label}</b></div></div>`;
+   const neighbours=(adjacency.get(n.id)||[]).map(l=>{const other=byId.get(l.source===n.id?l.target:l.source);return other?{node:other,type:l.kind,relationType:l.relationType}:null}).filter(Boolean).sort((a,b)=>(b.node.degree||0)-(a.node.degree||0)).slice(0,10);
+   if(neighbours.length){html+='<div class="divider"></div><div class="fieldlabel" style="margin-bottom:8px">Direkte Beziehungen</div><div class="relations">';neighbours.forEach(item=>{const col=EDGE[item.type]||'#8aa8bf';html+=`<div class="relation"><span style="color:${col}">●</span><span class="rtype">${safeText(item.relationType)}</span><span class="count">${safeText(item.node.label.slice(0,27))}</span></div>`});html+='</div>';}
+   if(shared)html+=`<div class="divider"></div><div class="fieldlabel">Gemeinsame Entitäten</div><div class="taglist"><span class="tag">${safeText(shared)}</span></div>`;
+   $('inspectBody').innerHTML=html;$('btnExpand').disabled=!n.id;$('btnExpand').textContent=showNeighborhood?'◎ Gesamte Galaxie anzeigen':'✧ Umfeld hervorheben';$('btnFocus').disabled=false;$('btnDetails').disabled=!n.path;$('btnClearSelection').disabled=false;$('btnClearSelection').textContent='Auswahl aufheben';
+ }
+ function showToast(text){const t=$('toast');t.textContent=text;t.classList.add('show');clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>t.classList.remove('show'),2200);}
+ function rotatePoint(p){const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);const x=cy*p.x+sy*p.z,z1=-sy*p.x+cy*p.z;return{x,y:cp*p.y-sp*z1,z:sp*p.y+cp*z1};}
+ function getCameraTarget(){
+   if(cameraTargetId){const live=byId.get(cameraTargetId);if(live)return {x:live.x,y:live.y,z:live.z};cameraTargetId='';}
+   return cameraTarget;
+ }
+ function project(p,w,h){const target=getCameraTarget();const r=rotatePoint({x:p.x-target.x,y:p.y-target.y,z:p.z-target.z}),vz=r.z-cameraDistance;if(vz>=-1)return null;const f=1/Math.tan(Math.PI/8),aspect=w/h;const nx=(r.x*f/aspect)/(-vz),ny=(r.y*f)/(-vz);return{x:(nx+1)*w/2+panX,y:(1-ny)*h/2+panY,z:-vz,visible:Math.abs(nx+2*panX/w)<1.35&&Math.abs(ny-2*panY/h)<1.35};}
+ function fitCamera(){
+   cameraTargetId='';cameraTarget={x:0,y:0,z:0};
+   let radius=160;for(const n of nodes)radius=Math.max(radius,Math.hypot(n.x,n.y,n.z));
+   cameraDistance=Math.max(520,Math.min(9500,radius*2.75));yaw=-.26;pitch=.18;panX=0;panY=0;
+ }
+ function focusNode(n){if(!n)return;cameraTargetId=n.id;cameraTarget={x:n.x,y:n.y,z:n.z};panX=0;panY=0;cameraDistance=Math.max(220,Math.min(cameraDistance*.72,galaxyScale*1.1));showToast('Ansicht auf „'+n.label+'“ zentriert');}
+ function simulate(dt){
+   if(paused||simAlpha<.003||nodes.length<2)return;
+   const step=Math.min(1.75,dt/16.67),cellSize=Math.max(32,galaxyScale*.085),grid=new Map(),key=(x,y,z)=>`${x},${y},${z}`;
+   for(const n of nodes){const kx=Math.floor(n.x/cellSize),ky=Math.floor(n.y/cellSize),kz=Math.floor(n.z/cellSize),k=key(kx,ky,kz);if(!grid.has(k))grid.set(k,[]);grid.get(k).push(n);}
+   const repulsion=galaxyScale*galaxyScale*.15;
+   for(const a of nodes){
+     const cx=Math.floor(a.x/cellSize),cy=Math.floor(a.y/cellSize),cz=Math.floor(a.z/cellSize);let fx=-a.x*.00018,fy=-a.y*.00018,fz=-a.z*.00018;
+     for(let gx=-1;gx<=1;gx++)for(let gy=-1;gy<=1;gy++)for(let gz=-1;gz<=1;gz++){
+       const bucket=grid.get(key(cx+gx,cy+gy,cz+gz));if(!bucket)continue;
+       for(const b of bucket){if(a===b)continue;const dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z,d2=dx*dx+dy*dy+dz*dz+10,d=Math.sqrt(d2);if(d>cellSize*1.95)continue;const push=Math.min(1.4,repulsion/d2)*simAlpha;fx+=dx/d*push;fy+=dy/d*push;fz+=dz/d*push;}
+     }
+     for(const l of adjacency.get(a.id)||[]){const b=l.s===a?l.t:l.s;if(!b)continue;const dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z,d=Math.sqrt(dx*dx+dy*dy+dz*dz)+.001,target=galaxyScale*.065,spring=(d-target)*.0015*simAlpha;fx+=dx/d*spring;fy+=dy/d*spring;fz+=dz/d*spring;}
+     a.vx=(a.vx+fx*step)*.91;a.vy=(a.vy+fy*step)*.91;a.vz=(a.vz+fz*step)*.91;
+     const vmax=galaxyScale*.025;a.vx=Math.max(-vmax,Math.min(vmax,a.vx));a.vy=Math.max(-vmax,Math.min(vmax,a.vy));a.vz=Math.max(-vmax,Math.min(vmax,a.vz));
+     a.x+=a.vx*step;a.y+=a.vy*step;a.z+=a.vz*step;
+   }
+   simAlpha*=Math.pow(.989,step);
+ }
+ function setupGL(){
+   if(!ctx){showToast('WebGL ist auf diesem System nicht verfügbar.');return false;}
+   const vs=`attribute vec3 aPosition;attribute vec4 aColor;attribute float aSize;uniform mat4 uProjection;uniform float uYaw;uniform float uPitch;uniform float uDistance;uniform float uViewportHeight;uniform vec2 uPan;uniform vec3 uTarget;varying vec4 vColor;varying float vPoint;void main(){vec3 relative=aPosition-uTarget;float cy=cos(uYaw),sy=sin(uYaw),cp=cos(uPitch),sp=sin(uPitch);vec3 q=vec3(cy*relative.x+sy*relative.z,relative.y,-sy*relative.x+cy*relative.z);vec3 r=vec3(q.x,cp*q.y-sp*q.z,sp*q.y+cp*q.z);float vz=r.z-uDistance;gl_Position=uProjection*vec4(r.x,r.y,vz,1.0);gl_Position.x+=uPan.x*gl_Position.w;gl_Position.y+=uPan.y*gl_Position.w;gl_PointSize=max(1.0,aSize*uViewportHeight/(max(1.0,-vz)*1.1));vColor=aColor;vPoint=aSize;}`;
+   const fs=`precision mediump float;varying vec4 vColor;varying float vPoint;uniform float uDots;void main(){float a=vColor.a;if(uDots>0.5){float d=length(gl_PointCoord-vec2(0.5))*2.0;float core=1.0-smoothstep(0.48,0.82,d);float glow=exp(-d*4.0)*0.48;a*=clamp(core+glow,0.0,1.0);if(a<0.02)discard;gl_FragColor=vec4(vColor.rgb*(0.6+core*1.5+glow),a);}else{gl_FragColor=vec4(vColor.rgb,a);}}`;
+   function shader(type,src){const s=ctx.createShader(type);ctx.shaderSource(s,src);ctx.compileShader(s);if(!ctx.getShaderParameter(s,ctx.COMPILE_STATUS))throw new Error(ctx.getShaderInfoLog(s)||'Shader compile failed');return s;}
+   const p=ctx.createProgram();ctx.attachShader(p,shader(ctx.VERTEX_SHADER,vs));ctx.attachShader(p,shader(ctx.FRAGMENT_SHADER,fs));ctx.linkProgram(p);if(!ctx.getProgramParameter(p,ctx.LINK_STATUS))throw new Error(ctx.getProgramInfoLog(p)||'Shader link failed');
+   return {program:p,attrs:{pos:ctx.getAttribLocation(p,'aPosition'),color:ctx.getAttribLocation(p,'aColor'),size:ctx.getAttribLocation(p,'aSize')},uni:{projection:ctx.getUniformLocation(p,'uProjection'),yaw:ctx.getUniformLocation(p,'uYaw'),pitch:ctx.getUniformLocation(p,'uPitch'),distance:ctx.getUniformLocation(p,'uDistance'),height:ctx.getUniformLocation(p,'uViewportHeight'),pan:ctx.getUniformLocation(p,'uPan'),target:ctx.getUniformLocation(p,'uTarget'),dots:ctx.getUniformLocation(p,'uDots')},buffer:ctx.createBuffer()};
+ }
+ let glProgram=null;
+ function perspective(fov,aspect,near,far){const f=1/Math.tan(fov/2),nf=1/(near-far);return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0]);}
+ function drawItems(items,mode,dots,pointHeight){if(!items.length)return;const floats=new Float32Array(items.length*8);let k=0;for(const o of items){floats[k++]=o.x;floats[k++]=o.y;floats[k++]=o.z;const c=o.col||toColor(o.color||'#ffffff',o.alpha??1);floats[k++]=c[0];floats[k++]=c[1];floats[k++]=c[2];floats[k++]=c[3];floats[k++]=o.size||1;}
+   ctx.bindBuffer(ctx.ARRAY_BUFFER,glProgram.buffer);ctx.bufferData(ctx.ARRAY_BUFFER,floats,ctx.DYNAMIC_DRAW);const stride=32;ctx.enableVertexAttribArray(glProgram.attrs.pos);ctx.vertexAttribPointer(glProgram.attrs.pos,3,ctx.FLOAT,false,stride,0);ctx.enableVertexAttribArray(glProgram.attrs.color);ctx.vertexAttribPointer(glProgram.attrs.color,4,ctx.FLOAT,false,stride,12);ctx.enableVertexAttribArray(glProgram.attrs.size);ctx.vertexAttribPointer(glProgram.attrs.size,1,ctx.FLOAT,false,stride,28);ctx.uniform1f(glProgram.uni.dots,dots?1:0);ctx.drawArrays(mode,0,items.length);
+ }
+ const stars=Array.from({length:270},(_,i)=>{const h=seeded('star'+i);return{x:randRange(-600,600,h),y:randRange(-390,390,seeded('sy'+i)),z:randRange(-630,-330,seeded('sz'+i)),col:toColor(i%8===0?'#3d7fa1':'#54728a',randRange(.17,.52,seeded('sa'+i))),size:randRange(1.0,2.7,seeded('ss'+i))}});
+ function render(now){requestAnimationFrame(render);const dt=lastFrame?Math.min(50,now-lastFrame):16;lastFrame=now;frame++;simulate(dt);const rect=viewport.getBoundingClientRect(),w=Math.max(1,Math.floor(rect.width*devicePixelRatio)),h=Math.max(1,Math.floor(rect.height*devicePixelRatio));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;ctx.viewport(0,0,w,h);}
+   if(!glProgram){return;}ctx.clearColor(0.005,0.012,0.023,1);ctx.clear(ctx.COLOR_BUFFER_BIT|ctx.DEPTH_BUFFER_BIT);ctx.enable(ctx.BLEND);ctx.blendFunc(ctx.SRC_ALPHA,ctx.ONE);ctx.enable(ctx.DEPTH_TEST);ctx.useProgram(glProgram.program);ctx.uniformMatrix4fv(glProgram.uni.projection,false,perspective(Math.PI/4,w/h,1,3000));ctx.uniform1f(glProgram.uni.yaw,yaw);ctx.uniform1f(glProgram.uni.pitch,pitch);ctx.uniform1f(glProgram.uni.distance,cameraDistance);ctx.uniform1f(glProgram.uni.height,h);ctx.uniform2f(glProgram.uni.pan,2*panX/Math.max(1,w),-2*panY/Math.max(1,h));const target=getCameraTarget();ctx.uniform3f(glProgram.uni.target,target.x,target.y,target.z);
+   drawItems(stars,ctx.POINTS,true,h);
+   const visibleLinks=links.filter(l=>l.s&&l.t&&activeNode(l.s)&&activeNode(l.t));const edgeItems=[];for(const l of visibleLinks){const emph=!showNeighborhood||(neighborhoodIds.has(l.source)&&neighborhoodIds.has(l.target));const c=toColor(EDGE[l.kind]||'#7790a8',emph ? .30 : .035);edgeItems.push({...l.s,col:c,size:1},{...l.t,col:c,size:1});}drawItems(edgeItems,ctx.LINES,false,h);
+   const particleItems=[];if(!paused){const stride=Math.max(1,Math.ceil(visibleLinks.length/1800));for(let i=0;i<visibleLinks.length;i+=stride){const l=visibleLinks[i];if(showNeighborhood&&(!neighborhoodIds.has(l.source)||!neighborhoodIds.has(l.target)))continue;const t=(now*.00017+i*.618033)%1;particleItems.push({x:l.s.x+(l.t.x-l.s.x)*t,y:l.s.y+(l.t.y-l.s.y)*t,z:l.s.z+(l.t.z-l.s.z)*t,col:toColor(EDGE[l.kind]||'#60e9ff',.9),size:5.6});}}drawItems(particleItems,ctx.POINTS,true,h);
+   const visibleNodes=nodes.filter(activeNode);drawItems(visibleNodes.map(n=>{const emph=!showNeighborhood||neighborhoodIds.has(n.id);return {...n,col:[n.col[0],n.col[1],n.col[2],selected===n?1:(emph?n.col[3]:.07)],size:(selected===n?Math.max(n.val*4.7,17):Math.max(n.val*3.4,8))*(1+(!paused ? .025*Math.sin(now*.002+(n.degree||0)) : 0))};}),ctx.POINTS,true,h);
+   // Place labels by semantic priority and projected screen space, hiding collisions.
+   const placed=[];const labelCandidates=[];
+   labels.forEach((el,id)=>{const n=byId.get(id);if(!n||!activeNode(n)||(showNeighborhood&&!neighborhoodIds.has(n.id))){el.classList.add('hidden');return;}const p=project(n,rect.width,rect.height);if(!p||!p.visible){el.classList.add('hidden');return;}labelCandidates.push({el,n,p,priority:labelPriority(n)});});
+   labelCandidates.sort((a,b)=>b.priority-a.priority);
+   for(const item of labelCandidates){
+     const {el,n,p}=item;const selectedNode=selected===n;
+     const minDepth=selectedNode?0:Math.max(0,Math.min(1,(cameraDistance-350)/2600));
+     const projectedSize=(Math.max(n.val||1,1)*rect.height)/(Math.max(1,p.z));
+     if(!selectedNode&&(projectedSize<0.65||(!showNeighborhood&&n.kind==='chunk')||minDepth>0.98)){el.classList.add('hidden');continue;}
+     const width=Math.min(170,Math.max(42,String(n.label||'').length*6.1+20)),height=25;
+     const box={x:p.x+6,y:p.y-height/2,w:width,h:height};
+     const collides=placed.some(b=>box.x<b.x+b.w+5&&box.x+box.w+5>b.x&&box.y<b.y+b.h+4&&box.y+box.h+4>b.y);
+     if(collides&&!selectedNode){el.classList.add('hidden');continue;}
+     placed.push(box);el.classList.remove('hidden');el.style.left=p.x+'px';el.style.top=p.y+'px';el.style.zIndex=String(selectedNode?2000:Math.max(1,Math.round(1000-p.z)));el.classList.toggle('selected',selectedNode);el.style.borderColor=selectedNode?TYPE[n.kind].color:'';
+   }
+ }
+ function resize(){if(canvas.width!==Math.floor(viewport.clientWidth*devicePixelRatio)||canvas.height!==Math.floor(viewport.clientHeight*devicePixelRatio)){canvas.width=Math.max(1,Math.floor(viewport.clientWidth*devicePixelRatio));canvas.height=Math.max(1,Math.floor(viewport.clientHeight*devicePixelRatio));if(ctx)ctx.viewport(0,0,canvas.width,canvas.height);}}
+ function selectFromScreen(x,y){const r=viewport.getBoundingClientRect();let best=null,bestD=36*36;for(const n of nodes){if(!activeNode(n))continue;const p=project(n,r.width,r.height);if(!p||!p.visible)continue;const dx=p.x-x,dy=p.y-y,d=dx*dx+dy*dy;if(d<bestD){best=n;bestD=d;}}if(best)selectNode(best);else clearSelection();}
+ canvas.addEventListener('pointerdown',e=>{pointer={x:e.clientX,y:e.clientY,ox:e.clientX,oy:e.clientY,dragged:false,button:e.button};canvas.setPointerCapture?.(e.pointerId);});
+ canvas.addEventListener('pointermove',e=>{if(!pointer)return;const dx=e.clientX-pointer.x,dy=e.clientY-pointer.y;if(Math.abs(e.clientX-pointer.ox)+Math.abs(e.clientY-pointer.oy)>4)pointer.dragged=true;if(e.buttons&1){yaw+=dx*.006;pitch=Math.max(-1.42,Math.min(1.42,pitch+dy*.006));}else if(e.buttons&2){panX+=dx*.6;panY+=dy*.6;}pointer.x=e.clientX;pointer.y=e.clientY;});
+ canvas.addEventListener('pointerup',e=>{if(pointer&&!pointer.dragged){const r=viewport.getBoundingClientRect();selectFromScreen(e.clientX-r.left,e.clientY-r.top);}pointer=null;});
+ canvas.addEventListener('contextmenu',e=>e.preventDefault());canvas.addEventListener('wheel',e=>{e.preventDefault();cameraDistance=Math.max(180,Math.min(10000,cameraDistance*(e.deltaY>0?1.09:.92)));},{passive:false});
+ // Pan offsets are applied as a camera target shift by translating each simulated point before projection.
+ function applyFilters(){document.querySelectorAll('.filter').forEach(b=>{const k=b.dataset.kind;b.classList.toggle('active',k==='all'?enabledKinds.size===Object.keys(TYPE).length:enabledKinds.has(k));});}
+ document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.kind;if(k==='all'){enabledKinds=new Set(Object.keys(TYPE));}else{if(enabledKinds.has(k))enabledKinds.delete(k);else enabledKinds.add(k);}applyFilters();}));
+ $('btnPause').addEventListener('click',()=>{paused=!paused;$('btnPause').textContent=paused?'▶':'Ⅱ';$('btnPause').title=paused?'Animation fortsetzen':'Animation pausieren';});
+ $('btnFit').addEventListener('click',()=>{fitCamera();});$('btnReset').addEventListener('click',()=>{fitCamera();yaw=-.26;pitch=.18;});$('btnZoomIn').addEventListener('click',()=>cameraDistance=Math.max(180,cameraDistance*.82));$('btnZoomOut').addEventListener('click',()=>cameraDistance=Math.min(10000,cameraDistance*1.2));$('btnFocus').addEventListener('click',()=>focusNode(selected));$('btnClearSelection').addEventListener('click',clearSelection);
+ $('btnExpand').addEventListener('click',()=>{if(!selected)return;showNeighborhood=!showNeighborhood;if(showNeighborhood){neighborhoodIds=new Set([selected.id]);for(const l of adjacency.get(selected.id)||[]){neighborhoodIds.add(l.source);neighborhoodIds.add(l.target);}}else{neighborhoodIds.clear();}buildLabels();updateInspector();showToast(showNeighborhood?'Umfeld hervorgehoben; nur Labels der hervorgehobenen Knoten werden gezeigt.':'Gesamter Datenbestand sichtbar.');});
+ $('btnDetails').addEventListener('click',async()=>{if(!selected?.path||!window.pywebview?.api)return;try{const r=await window.pywebview.api.open_in_explorer(selected.path);showToast(r?.ok?'Originalpfad im Explorer geöffnet.':(r?.error||'Explorer konnte nicht geöffnet werden.'));}catch(e){showToast('Explorer konnte nicht geöffnet werden: '+e);}});
+ $('btnRefresh').addEventListener('click',async()=>{if(!window.pywebview?.api)return;try{const r=await window.pywebview.api.refresh_graph();if(r?.ok)showToast('Graphdaten werden aktualisiert …');else showToast(r?.error||'Aktualisierung fehlgeschlagen');}catch(e){showToast(String(e));}});
+ async function requestFullDatabase(version){if(fullLoadInFlight||requestedLoadVersion===String(version||''))return;fullLoadInFlight=true;requestedLoadVersion=String(version||'');try{showToast('Lade alle Knoten und Beziehungen aus Neo4j …');const r=await window.pywebview.api.load_database_graph();if(!r?.ok){const message=r?.error||'Die vollständige Datenbank konnte nicht geladen werden.';showToast(message);$('updatedAt').textContent='Laden fehlgeschlagen';$('btnRefresh').disabled=false;$('nodeTitle').textContent='Graph konnte nicht geladen werden';$('inspectBody').innerHTML='<div class="err">'+String(message).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</div>';}}catch(e){showToast('Datenbank konnte nicht geladen werden: '+e);}finally{fullLoadInFlight=false;}}
+ const pollUpdates=async()=>{try{if(window.pywebview?.api){const d=await window.pywebview.api.get_graph_update(currentVersion);if(d){normaliseGraph(d);if(d.scope==='database'&&d.loaded===false)requestFullDatabase(d.version);}}}catch(e){console.warn('Graph payload polling failed',e);}setTimeout(pollUpdates,500);};
+ if(ctx){try{glProgram=setupGL();requestAnimationFrame(render);window.addEventListener('resize',resize);}catch(err){showToast('3D-Renderer konnte nicht gestartet werden: '+err.message);console.error(err);}}
+ let pollingStarted=false;const startPolling=()=>{if(!pollingStarted){pollingStarted=true;pollUpdates();}};
+ window.addEventListener('pywebviewready',startPolling);
+ if(window.pywebview?.api)setTimeout(startPolling,0);
+ // Browser-only development fallback gives a useful status instead of a blank surface.
+ if(!window.pywebview){$('nodeTitle').textContent='Warte auf Desktop-Bridge';$('inspectBody').innerHTML='<div class="empty-inspector">Die 3D-Ansicht wird von der Windows-Desktopanwendung mit Neo4j-Daten versorgt.</div>';}
+})();
+</script>
+</body>
+</html>

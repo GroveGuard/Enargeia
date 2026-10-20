@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import logging
 import os
 import queue
 import subprocess
+import sys
+import tempfile
+import uuid
 from logging.handlers import RotatingFileHandler
 import threading
 from pathlib import Path
@@ -13,25 +17,46 @@ from typing import Any, Callable
 
 import flet as ft
 
+from . import __version__
 from .config import PROJECT_ROOT, get_settings
 from .embeddings import EmbeddingClient
 from .graph_intelligence import GraphIntelligence
 from .indexer import DirectoryIndexer
 from .neo4j_store import Neo4jStore
-from .search import KnowledgeSearch
 
-APP_NAME = "Windows Knowledge Graph"
-BG = "#0B1020"
-SIDEBAR = "#111827"
-PANEL = "#151F30"
-PANEL_ALT = "#1B293D"
-BORDER = "#29364B"
-TEXT = "#E5E7EB"
-MUTED = "#9CA3AF"
-ACCENT = "#60A5FA"
-GOOD = "#4ADE80"
-WARN = "#FBBF24"
-BAD = "#F87171"
+from .ui.components import (
+    card as _card, section_title as _section_title, eyebrow as _eyebrow,
+    status_pill as _status_pill, icon_tile as _icon_tile,
+)
+from .graph3d_window import build_database_loading_payload, write_graph_payload
+from .ui.theme import (
+    ACCENT,
+    ACCENT_SOFT,
+    APP_NAME,
+    BLUE,
+    BAD,
+    BG,
+    BORDER,
+    HEADER,
+    GOOD,
+    MUTED,
+    PANEL,
+    PANEL_ALT,
+    PANEL_RAISED,
+    PURPLE,
+    SIDEBAR,
+    SUBTLE,
+    TEXT,
+    WARN,
+)
+
+
+def _safe_icon(name: str) -> Any:
+    """Return an icon available in the installed Flet/Material icon catalogue."""
+    try:
+        return getattr(ft.Icons, name)
+    except AttributeError:
+        return ft.Icons.HUB_OUTLINED
 
 
 def _configure_logging() -> Path:
@@ -71,8 +96,8 @@ def _settings_preview() -> dict[str, str]:
         "GDS max. KNN-Textabschnitte": str(settings.gds_max_knn_chunks),
         "Max. Chunks je Datei": str(settings.max_chunks_per_file),
         "Max. Dateigröße (MB)": str(settings.max_file_size_mb),
-        "Chat-Modell": settings.llm_model,
-        "Chat-Endpunkt": settings.llm_base_url,
+        "LLM-Modell für Extraktion": settings.llm_model,
+        "LLM-Endpunkt für Extraktion": settings.llm_base_url,
     }
 
 
@@ -80,28 +105,6 @@ def _root_id_from_path(store: Neo4jStore, value: str | None) -> str | None:
     if not value or not value.strip():
         return None
     return store.root_id_for(Path(value.strip()).expanduser().resolve())
-
-
-def _run_search(query: str, limit: int, root_path: str) -> list[dict[str, Any]]:
-    settings = get_settings()
-    settings.validate_neo4j()
-    searcher = KnowledgeSearch(settings)
-    try:
-        root_id = _root_id_from_path(searcher.store, root_path)
-        return searcher.search(query, limit=limit, root_id=root_id)
-    finally:
-        searcher.close()
-
-
-def _run_global_search(query: str, limit: int, root_path: str) -> dict[str, Any]:
-    settings = get_settings()
-    settings.validate_neo4j()
-    searcher = KnowledgeSearch(settings)
-    try:
-        root_id = _root_id_from_path(searcher.store, root_path)
-        return searcher.global_search(query, limit=limit, root_id=root_id)
-    finally:
-        searcher.close()
 
 
 def _load_dashboard_data() -> tuple[dict[str, int], list[dict[str, Any]]]:
@@ -191,7 +194,7 @@ def _run_graph_query(query: str, root_path: str) -> dict[str, Any] | None:
     store = Neo4jStore(settings)
     try:
         root_id = _root_id_from_path(store, root_path)
-        return store.graph_neighborhood(query, root_id=root_id, limit=12)
+        return store.graph_neighborhood(query, root_id=root_id, limit=30)
     finally:
         store.close()
 
@@ -236,37 +239,32 @@ def _run_review_graph_link_candidate(candidate_id: str, decision: str, note: str
         store.close()
 
 
-def _card(content: ft.Control, *, padding: int = 18, bgcolor: str = PANEL, width: int | None = None) -> ft.Container:
-    return ft.Container(
-        content=content,
-        padding=padding,
-        bgcolor=bgcolor,
-        border_radius=14,
-        width=width,
-    )
-
-
-def _section_title(title: str, subtitle: str | None = None) -> ft.Column:
-    controls: list[ft.Control] = [ft.Text(title, size=18, weight=ft.FontWeight.W_600, color=TEXT)]
-    if subtitle:
-        controls.append(ft.Text(subtitle, size=12, color=MUTED))
-    return ft.Column(controls=controls, spacing=4)
 
 
 def main(page: ft.Page) -> None:
     _configure_logging()
     page.title = APP_NAME
     page.theme_mode = ft.ThemeMode.DARK
+    page.theme = ft.Theme(color_scheme_seed=ACCENT)
     page.bgcolor = BG
     page.padding = 0
     page.spacing = 0
+    try:
+        page.window.width = 1500
+        page.window.height = 940
+        page.window.min_width = 1120
+        page.window.min_height = 720
+    except Exception:
+        pass
 
     scan_log_queue: queue.Queue[str] = queue.Queue()
     scan_state: dict[str, Any] = {"running": False, "result": None, "error": None, "cancel_event": None}
+    graph3d_process: subprocess.Popen[Any] | None = None
+    graph3d_payload_path: Path | None = None
 
     # ---------------- Shared controls ----------------
-    header_title = ft.Text("Dashboard", size=23, weight=ft.FontWeight.BOLD, color=TEXT)
-    header_subtitle = ft.Text("Unternehmenswissen in Neo4j indexieren, verknüpfen und analysieren", size=12, color=MUTED)
+    header_title = ft.Text("Übersicht", size=23, weight=ft.FontWeight.BOLD, color=TEXT)
+    header_subtitle = ft.Text("Graph aufbauen, Qualität sichern und Struktur analysieren", size=12, color=MUTED)
     global_status = ft.Text("Verbindung noch nicht geprüft", size=12, color=MUTED)
     view_host = ft.Container(expand=True, padding=22, bgcolor=BG)
 
@@ -274,8 +272,13 @@ def main(page: ft.Page) -> None:
     for key in ("roots", "folders", "files", "chunks", "entities", "assertions", "truncated_files", "insights", "link_candidates", "communities", "components", "semantic_similarity_edges"):
         stat_values[key] = ft.Text("–", size=26, weight=ft.FontWeight.BOLD, color=TEXT)
 
-    overview_message = ft.Text("Verbinde dich mit Neo4j, um den aktuellen Bestand zu laden.", size=12, color=MUTED)
-    root_list = ft.Column(spacing=8, controls=[])
+    overview_message = ft.Text("Graph-Bestand wird beim Start geladen.", size=12, color=MUTED, expand=True, max_lines=2)
+    quality_stat_values = {
+        "truncated_files": ft.Text("–", size=19, weight=ft.FontWeight.W_600, color=TEXT),
+        "link_candidates": ft.Text("–", size=19, weight=ft.FontWeight.W_600, color=TEXT),
+    }
+    source_root_list = ft.Column(spacing=8, controls=[])
+    source_registry_status = ft.Text("Root-Registry wird geladen …", size=11, color=MUTED)
 
     directory_field = ft.TextField(
         label="Windows-Verzeichnis",
@@ -285,22 +288,17 @@ def main(page: ft.Page) -> None:
         text_size=13,
         border=ft.OutlineInputBorder(border_radius=10),
     )
-    root_filter_search = ft.TextField(label="Root-Pfad (optional)", hint_text="Leer lassen für alle Roots", expand=True, text_size=12)
-    search_query = ft.TextField(
-        label="Was möchtest du wissen?",
-        hint_text="z. B. Welche Module schreiben in die SQLite-Datenbank?",
+    graph_root_filter = ft.TextField(
+        label="Root eingrenzen (optional)",
+        hint_text="Leer lassen, um alle indexierten Roots einzubeziehen",
         expand=True,
-        on_submit=lambda e: page.run_task(search_task),
+        text_size=12,
     )
     graph_query = ft.TextField(
         label="Dateiname oder Pfad",
         hint_text="z. B. main.py oder src/winkg/indexer.py",
         expand=True,
         on_submit=lambda e: page.run_task(graph_task),
-    )
-    result_limit = ft.TextField(label="Treffer (5–20)", value="8", width=135, text_size=12)
-    global_search_checkbox = ft.Checkbox(
-        label="Global Search: Zusammenfassung über Communities + Originalquellen (LLM)", value=False
     )
     force_checkbox = ft.Checkbox(label="Alle Dateien erneut verarbeiten", value=False)
     extract_entities_checkbox = ft.Checkbox(label="Entitäten und Beziehungen per Chat-LLM extrahieren", value=False)
@@ -313,36 +311,118 @@ def main(page: ft.Page) -> None:
     scan_progress = ft.ProgressRing(width=18, height=18, visible=False, stroke_width=2)
     scan_start_button: ft.Button
     scan_rebuild_button: ft.Button
-    scan_log = ft.ListView(expand=True, spacing=4, auto_scroll=True)
+    scan_log = ft.ListView(expand=True, spacing=4, auto_scroll=True, controls=[ft.Text("Noch keine Scan-Aktivität. Starte einen Scan, um Live-Protokolle zu sehen.", size=11, color=MUTED)])
 
-    search_status = ft.Text("Die Ergebnisse enthalten immer Quellenpfade, soweit verfügbar.", size=12, color=MUTED)
-    search_results = ft.Column(spacing=10, controls=[])
-    graph_status = ft.Text("Suche eine Datei, um ihre direkten Beziehungen zu erkunden.", size=12, color=MUTED)
-    graph_results = ft.Column(spacing=12, controls=[])
+    graph_status = ft.Text("Suche nach Dateien und gespeicherten Graph-Beziehungen.", size=12, color=MUTED)
+    galaxy_status = ft.Text("Bereit · vollständige Neo4j-Datenbank wird beim Öffnen geladen.", size=11, color=MUTED)
+    graph_results = ft.Column(spacing=12, controls=[ft.Container(content=ft.Text("Wähle eine Datei oder einen Pfad, um die gespeicherten Graph-Beziehungen zu untersuchen.", size=12, color=MUTED), padding=18, bgcolor=PANEL, border=ft.Border.all(1, BORDER), border_radius=10)], expand=False)
     connection_status = ft.Text("Noch nicht geprüft", size=13, color=MUTED)
-    connection_details = ft.Column(spacing=7, controls=[])
+    connection_details = ft.Column(spacing=7, controls=[ft.Container(content=ft.Text("Starte den Systemtest, um Verbindungsdetails und Laufzeitdiagnose zu laden.", size=11, color=MUTED), padding=12, bgcolor=PANEL_ALT, border_radius=8)], expand=False)
     graph_intelligence_status = ft.Text("Graphanalyse wurde noch nicht ausgeführt.", size=12, color=MUTED)
-    graph_intelligence_output = ft.Column(spacing=9, controls=[])
+    graph_intelligence_output = ft.Column(spacing=9, controls=[ft.Container(content=ft.Text("Noch keine Analyseergebnisse. Führe zuerst eine Graphanalyse aus.", size=12, color=MUTED), padding=16, bgcolor=PANEL_ALT, border_radius=8)], expand=False)
+    quality_status = ft.Text("Beziehungsvorschläge warten auf Prüfung.", size=12, color=MUTED)
+    quality_output = ft.Column(spacing=9, controls=[ft.Container(content=ft.Text("Beziehungsvorschläge werden hier nach dem Laden angezeigt.", size=12, color=MUTED), padding=16, bgcolor=PANEL_ALT, border_radius=8)], expand=False)
     gds_analysis_checkbox = ft.Checkbox(label="GDS-Algorithmen zusätzlich ausführen (sofern installiert)", value=True)
 
     # ---------------- Utility rendering ----------------
+    def open_graph3d_viewer(data: dict[str, Any], root_filter: str = "") -> tuple[bool, str]:
+        """Open or update the native WebView2 3D viewer without blocking Flet."""
+        nonlocal graph3d_process, graph3d_payload_path
+        if importlib.util.find_spec("webview") is None:
+            return False, "3D-Engine fehlt. Bitte setup_windows.bat erneut ausführen, damit pywebview installiert wird."
+        try:
+            # The 3D window always represents the whole Neo4j database, not a selected-file neighborhood.
+            payload = build_database_loading_payload()
+            if graph3d_process is not None and graph3d_process.poll() is None and graph3d_payload_path is not None:
+                write_graph_payload(graph3d_payload_path, payload)
+                return True, "Die geöffnete 3D-Ansicht wurde aktualisiert."
+
+            if graph3d_payload_path is not None:
+                try:
+                    graph3d_payload_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            graph3d_payload_path = Path(tempfile.gettempdir()) / f"winkg_graph3d_{os.getpid()}_{uuid.uuid4().hex}.json"
+            write_graph_payload(graph3d_payload_path, payload)
+
+            python_executable = sys.executable
+            if os.name == "nt":
+                pythonw = Path(sys.executable).with_name("pythonw.exe")
+                if pythonw.is_file():
+                    python_executable = str(pythonw)
+            command = [python_executable, "-m", "winkg.graph3d_window", "--payload", str(graph3d_payload_path)]
+            graph3d_process = subprocess.Popen(
+                command,
+                cwd=str(PROJECT_ROOT),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            logging.getLogger(__name__).info("3D-Graphfenster gestartet (PID %s)", graph3d_process.pid)
+            return True, "Die animierte 3D-Graphansicht wurde in einem eigenen Desktopfenster geöffnet."
+        except Exception as exc:
+            logging.getLogger(__name__).exception("3D-Graphfenster konnte nicht geöffnet werden")
+            return False, f"3D-Ansicht konnte nicht geöffnet werden: {exc}"
+
+    def graph3d_launch_panel() -> ft.Control:
+        """Prominent, independent launcher for the full-database 3D galaxy."""
+        return _card(ft.Row(controls=[
+            _icon_tile(_safe_icon("HUB_OUTLINED"), ACCENT, size=48),
+            ft.Column(controls=[
+                _eyebrow("LIVE 3D GALAXY · GESAMTER GRAPH"),
+                ft.Text("Die Wissensgalaxie live erleben", size=17, weight=ft.FontWeight.BOLD, color=TEXT),
+                ft.Text("Alle Neo4j-Knoten und Beziehungen in einer animierten 3D-Ansicht. Unabhängig von der SVG-Suche darunter.", size=11, color=MUTED),
+                galaxy_status,
+            ], spacing=4, expand=True),
+            ft.Button(content="Live-3D-Galaxie öffnen", icon=_safe_icon("OPEN_IN_NEW_ROUNDED"), on_click=launch_graph3d_from_button),
+        ], spacing=14, vertical_alignment=ft.CrossAxisAlignment.CENTER), padding=18, bgcolor="#0A1D2B", border_color="#1B6A6B")
+
+    def launch_graph3d_from_button(_: Any = None) -> None:
+        opened, message = open_graph3d_viewer({}, "")
+        galaxy_status.value = message
+        galaxy_status.color = GOOD if opened else WARN
+        page.update()
+
     def add_notice(target: ft.Column, message: str, color: str = MUTED) -> None:
         target.controls.clear()
         target.controls.append(_card(ft.Text(message, color=color, size=13)))
 
     def stat_card(key: str, label: str, note: str) -> ft.Container:
+        icon_map = {
+            "roots": (_safe_icon("FOLDER_SPECIAL_OUTLINED"), BLUE),
+            "folders": (ft.Icons.FOLDER_OPEN_OUTLINED, BLUE),
+            "files": (_safe_icon("DRAFT_OUTLINED"), ACCENT),
+            "chunks": (_safe_icon("COPY_ALL_OUTLINED"), WARN),
+            "entities": (ft.Icons.HUB_OUTLINED, PURPLE),
+            "assertions": (_safe_icon("VERIFIED_OUTLINED"), GOOD),
+            "truncated_files": (_safe_icon("CONTENT_CUT_OUTLINED"), WARN),
+            "insights": (_safe_icon("RULE_OUTLINED"), PURPLE),
+            "link_candidates": (ft.Icons.LINK_OUTLINED, WARN),
+            "communities": (_safe_icon("BUBBLE_CHART_OUTLINED"), BLUE),
+            "components": (ft.Icons.ACCOUNT_TREE_OUTLINED, ACCENT),
+            "semantic_similarity_edges": (ft.Icons.HUB_OUTLINED, PURPLE),
+        }
+        icon, color = icon_map.get(key, (_safe_icon("ANALYTICS_OUTLINED"), ACCENT))
         return _card(
             ft.Column(
                 controls=[
-                    ft.Text(label, size=12, color=MUTED),
-                    stat_values[key],
-                    ft.Text(note, size=11, color=MUTED),
+                    ft.Row(
+                        controls=[ft.Text(label, size=11, color=MUTED, expand=True), _icon_tile(icon, color, size=34)],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Container(content=stat_values[key], padding=ft.Padding.only(top=4, bottom=1)),
+                    ft.Text(note, size=10, color=SUBTLE),
                 ],
                 spacing=7,
             ),
-            padding=16,
-            bgcolor=PANEL_ALT,
-            width=170,
+            padding=15,
+            bgcolor=PANEL,
+            width=235,
+            border_color=BORDER,
+            radius=14,
         )
 
     def status_color_for_status(value: str) -> str:
@@ -354,55 +434,6 @@ def main(page: ft.Page) -> None:
         if any(part in normalized for part in ("läuft", "prüfe", "verarbeite")):
             return WARN
         return MUTED
-
-    def result_card(row: dict[str, Any], number: int, citation_label: str | None = None) -> ft.Container:
-        filename = str(row.get("filename") or Path(str(row.get("path") or "Unbekannte Datei")).name)
-        path = str(row.get("path") or "")
-        page_text = f" · Seite {row['page']}" if row.get("page") else ""
-        section_text = f" · {row['section']}" if row.get("section") else ""
-        score_text = f"RRF-Score: {row.get('score', 0)}"
-        snippet = str(row.get("text") or "").strip()
-        entities = row.get("entities") or []
-        subtitle = f"{path}{page_text}{section_text}"
-        controls: list[ft.Control] = [
-            ft.Row(
-                controls=[
-                    ft.Text(citation_label or f"{number:02d}", color=ACCENT, weight=ft.FontWeight.BOLD, size=13),
-                    ft.Column(
-                        controls=[
-                            ft.Text(filename, size=14, weight=ft.FontWeight.W_600, color=TEXT),
-                            ft.Text(subtitle, size=11, color=MUTED, selectable=True),
-                        ],
-                        spacing=4,
-                        expand=True,
-                    ),
-                    ft.Text(score_text, size=10, color=MUTED),
-                ],
-                vertical_alignment=ft.CrossAxisAlignment.START,
-                spacing=10,
-            ),
-            ft.Text(snippet[:1800] or "Für diese Datei wurde kein lesbarer Text gespeichert.", size=12, color=TEXT, selectable=True),
-        ]
-        if row.get("needs_deep_analysis"):
-            controls.append(ft.Text(
-                f"Quelle gekürzt: {row.get('indexed_chunks', 0)} von {row.get('total_chunks', 0)} Chunks indexiert; "
-                f"{row.get('omitted_chunks', 0)} ausgelassen. Gesonderte Analyse empfohlen.",
-                size=11, color=WARN,
-            ))
-        if entities:
-            entity_names = ", ".join(f"{item.get('name')} ({item.get('type')})" for item in entities[:8])
-            controls.append(ft.Text(f"Entitäten: {entity_names}", size=11, color=ACCENT))
-        controls.append(
-            ft.Row(
-                controls=[
-                    ft.Button(
-                        content="Im Graph erkunden",
-                        on_click=lambda e, p=path: open_in_graph(p),
-                    ),
-                ],
-            )
-        )
-        return _card(ft.Column(controls=controls, spacing=10), padding=15)
 
     def node_card(title: str, subtitle: str, kind: str, *, width: int = 235, on_open: Callable[[], None] | None = None) -> ft.Container:
         details: list[ft.Control] = [
@@ -432,74 +463,209 @@ def main(page: ft.Page) -> None:
 
     # ---------------- Dashboard ----------------
     def build_dashboard_view() -> ft.Control:
-        stats_row = ft.Row(
+        """Dashboard: concise status and quality, without duplicate navigation links."""
+        hero = _card(
+            ft.Column(
+                controls=[
+                    _eyebrow(f"GRAPH OPERATIONS CENTER  /  V{__version__}"),
+                    ft.Text("Dein Unternehmenswissen. Als Graph strukturiert.", size=25, weight=ft.FontWeight.BOLD, color=TEXT),
+                    ft.Text(
+                        "Indexierung, Datenabdeckung und Beziehungsqualität im Blick. "
+                        "Inhaltliche Fragen werden von externen LLMs über MCP beantwortet.",
+                        size=12, color=MUTED,
+                    ),
+                ],
+                spacing=8,
+            ),
+            padding=22,
+            bgcolor="#101D2A",
+            border_color="#284552",
+            radius=18,
+        )
+
+        primary_stats = ft.Row(
             controls=[
-                stat_card("roots", "Quell-Roots", "Indexierte Verzeichnisse"),
-                stat_card("folders", "Ordner", "Strukturknoten"),
-                stat_card("files", "Dateien", "Mit Dateimetadaten"),
-                stat_card("chunks", "Textabschnitte", "Suchbare Inhalte"),
-                stat_card("entities", "Entitäten", "Semantische Knoten"),
-                stat_card("assertions", "Aussagen", "Mit Herkunft belegte Beziehungen"),
-                stat_card("truncated_files", "Analyse erforderlich", "Zu groß oder gekürzt"),
-                stat_card("insights", "Graph-Befunde", "Gespeicherte Analyseergebnisse"),
-                stat_card("link_candidates", "Hypothesen", "Prüfbare Beziehungsvorschläge"),
-                stat_card("communities", "Communities", "GDS-Gruppierungen"),
-                stat_card("components", "Komponenten", "Zusammenhängende Graphinseln (GDS WCC)"),
-                stat_card("semantic_similarity_edges", "Ähnlichkeitskanten", "GDS-KNN zwischen Textabschnitten"),
+                stat_card("files", "Indexierte Dateien", "Erfasste Dateiknoten"),
+                stat_card("chunks", "Textabschnitte", "Gespeicherte Quelleninhalte"),
+                stat_card("entities", "Entitäten", "Semantische Knoten im Graph"),
+                stat_card("roots", "Datenquellen", "Indexierte Root-Verzeichnisse"),
             ],
             wrap=True,
             spacing=12,
             run_spacing=12,
         )
-        # Use an intrinsically sized vertical layout here. An expanding Column
-        # inside a Row can occupy the whole available height in Flet 1.x and
-        # render as a large empty grey panel in the desktop window.
-        connection_panel = _card(
+
+        operation_status = ft.Row(
+            controls=[ft.Icon(_safe_icon("INFO_OUTLINE"), size=15, color=ACCENT), overview_message],
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        coverage_panel = _card(
             ft.Column(
                 controls=[
-                    ft.Text("Datenbankstatus", size=15, weight=ft.FontWeight.W_600, color=TEXT),
-                    overview_message,
                     ft.Row(
                         controls=[
-                            ft.Button(content="Bestand aktualisieren", on_click=lambda e: page.run_task(load_dashboard_task)),
-                            ft.Button(content="Verbindung prüfen", on_click=lambda e: page.run_task(doctor_task)),
+                            ft.Column(
+                                controls=[
+                                    _eyebrow("DATA QUALITY"),
+                                    ft.Text("Abdeckung & Verlässlichkeit", size=17, weight=ft.FontWeight.W_600, color=TEXT),
+                                    ft.Text("Konkrete Qualitätsindikatoren aus dem Graphen.", size=11, color=MUTED),
+                                ],
+                                spacing=4,
+                                expand=True,
+                            ),
+                            _status_pill("Evidenzbasiert", GOOD),
                         ],
-                        wrap=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         spacing=12,
                     ),
-                ],
-                spacing=10,
-            )
-        )
-        roots_panel = _card(
-            ft.Column(
-                controls=[
-                    _section_title("Indexierte Verzeichnisse", "Ein Root auswählen, um es im Scan-Bereich zu aktualisieren."),
-                    root_list,
+                    ft.Divider(color=BORDER),
+                    ft.Row(
+                        controls=[
+                            ft.Container(
+                                content=ft.Row(
+                                    controls=[
+                                        _icon_tile(_safe_icon("CONTENT_CUT_OUTLINED"), WARN, size=38),
+                                        ft.Column(controls=[
+                                            ft.Text("Gekürzter Inhalt", size=12, color=TEXT),
+                                            ft.Text("Dateien für eine spätere Analyse markiert", size=10, color=MUTED),
+                                        ], spacing=4, expand=True),
+                                        quality_stat_values["truncated_files"],
+                                    ],
+                                    spacing=10,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                padding=12,
+                                bgcolor=PANEL_ALT,
+                                border_radius=11,
+                                expand=True,
+                            ),
+                            ft.Container(
+                                content=ft.Row(
+                                    controls=[
+                                        _icon_tile(ft.Icons.LINK_OUTLINED, PURPLE, size=38),
+                                        ft.Column(controls=[
+                                            ft.Text("Offene Beziehungen", size=12, color=TEXT),
+                                            ft.Text("Hypothesen, die noch geprüft werden müssen", size=10, color=MUTED),
+                                        ], spacing=4, expand=True),
+                                        quality_stat_values["link_candidates"],
+                                    ],
+                                    spacing=10,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                padding=12,
+                                bgcolor=PANEL_ALT,
+                                border_radius=11,
+                                expand=True,
+                            ),
+                        ],
+                        spacing=12,
+                        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+                    ),
+                    ft.Row(
+                        controls=[
+                            ft.Icon(_safe_icon("INFO_OUTLINE"), size=15, color=SUBTLE),
+                            ft.Text(
+                                "Vorschläge bleiben getrennt von bestätigten Fakten; Quellen und Evidenz sind maßgeblich.",
+                                size=10,
+                                color=MUTED,
+                            ),
+                        ],
+                        spacing=8,
+                    ),
                 ],
                 spacing=13,
-            )
+            ),
+            padding=18,
+            bgcolor=PANEL,
+            border_color=BORDER,
         )
-        quick_panel = _card(
-            ft.Column(
+
+        graph_stats = ft.Row(
+            controls=[
+                stat_card("folders", "Ordner", "Strukturknoten"),
+                stat_card("assertions", "Belegte Aussagen", "Quellgestützte Fakten"),
+                stat_card("communities", "Communities", "Graph-Gruppierungen"),
+                stat_card("components", "Komponenten", "Zusammenhängende Bereiche"),
+                stat_card("insights", "Analysebefunde", "Gespeicherte Einsichten"),
+                stat_card("semantic_similarity_edges", "Ähnlichkeitskanten", "GDS-Ähnlichkeiten zwischen Chunks"),
+            ],
+            wrap=True,
+            spacing=10,
+            run_spacing=10,
+        )
+
+        # Flet's ExpansionTile was not visibly discoverable in the deployed desktop
+        # view. Use an explicit, full-width disclosure row with a clear action label.
+        # Keep the statistics controls mounted and toggle visibility without rebuilding
+        # the dashboard or detaching controls from their parent.
+        graph_stats.visible = False
+
+        def toggle_graph_stats(_: Any) -> None:
+            graph_stats.visible = not bool(graph_stats.visible)
+            graph_stats_toggle.content = ft.Row(
                 controls=[
-                    _section_title("Schnellstart", "Indexiere zunächst ein überschaubares Projektverzeichnis."),
-                    ft.Text("1. Verzeichnis im Bereich Scan auswählen.  2. Inkrementellen Scan starten.  3. Inhalte unter Suche und Graph erkunden.", size=12, color=MUTED),
-                    ft.Button(content="Zum Scan wechseln", on_click=lambda e: navigate("scan")),
+                    ft.Icon(
+                        ft.Icons.KEYBOARD_ARROW_UP if graph_stats.visible else ft.Icons.KEYBOARD_ARROW_DOWN,
+                        color=ACCENT,
+                        size=17,
+                    ),
+                    ft.Text(
+                        "Statistik ausblenden" if graph_stats.visible else "Erweiterte Statistik anzeigen",
+                        size=11,
+                        weight=ft.FontWeight.W_600,
+                        color=TEXT,
+                    ),
                 ],
-                spacing=10,
+                spacing=5,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             )
+            page.update()
+
+        # Put the disclosure beside the section label, above every status message.
+        # This keeps it visible in the initial viewport and avoids hiding it at the
+        # bottom of a long dashboard.
+        graph_stats_toggle = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, color=ACCENT, size=17),
+                    ft.Text("Erweiterte Statistik anzeigen", size=11, weight=ft.FontWeight.W_600, color=TEXT),
+                ],
+                spacing=5,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=7),
+            bgcolor=PANEL_ALT,
+            border=ft.Border.all(1, BORDER),
+            border_radius=9,
+            ink=True,
+            tooltip="Zusätzliche Graph-Kennzahlen ein- oder ausblenden",
+            on_click=toggle_graph_stats,
         )
+
+        # A non-scrollable, viewport-sized Column is intentional here: the Overview
+        # has a small, finite set of panels and should not create a second scrollable
+        # surface. Other long pages own their own explicit scroll containers.
         return ft.Column(
             controls=[
-                _section_title("Überblick", "Status deiner lokalen oder entfernten Neo4j-Wissensbasis"),
-                stats_row,
-                connection_panel,
-                roots_panel,
-                quick_panel,
+                hero,
+                ft.Row(
+                    controls=[
+                        ft.Text("GRAPH AT A GLANCE", size=10, weight=ft.FontWeight.BOLD, color=SUBTLE),
+                        ft.Container(expand=True),
+                        graph_stats_toggle,
+                        _status_pill("Live-Werte aus Neo4j", ACCENT),
+                    ],
+                    spacing=10,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                primary_stats,
+                graph_stats,
+                operation_status,
+                coverage_panel,
             ],
-            spacing=16,
-            scroll=ft.ScrollMode.AUTO,
+            spacing=15,
             expand=True,
         )
 
@@ -650,8 +816,8 @@ def main(page: ft.Page) -> None:
         if len(scan_log.controls) > 350:
             del scan_log.controls[:len(scan_log.controls) - 350]
 
-    scan_start_button = ft.Button(content="Inkrementell indexieren", on_click=lambda e: start_scan(False))
-    scan_rebuild_button = ft.Button(content="Root neu aufbauen", on_click=lambda e: start_scan(True))
+    scan_start_button = ft.Button(content="Inkrementell indexieren", icon=_safe_icon("SYNC_ROUNDED"), on_click=lambda e: start_scan(False))
+    scan_rebuild_button = ft.Button(content="Root neu aufbauen", icon=_safe_icon("DELETE_OUTLINE"), on_click=lambda e: start_scan(True), color=BAD)
     def request_scan_cancel(_: Any) -> None:
         event = scan_state.get("cancel_event")
         if scan_state.get("running") and event is not None:
@@ -660,167 +826,101 @@ def main(page: ft.Page) -> None:
             scan_status.value = "Abbruch angefordert … Die aktuelle Datei wird noch sicher abgeschlossen."
             scan_status.color = WARN
             page.update()
-    scan_cancel_button = ft.Button(content="Scan abbrechen / pausieren", on_click=request_scan_cancel, disabled=True)
+    scan_cancel_button = ft.Button(content="Scan abbrechen / pausieren", icon=_safe_icon("PAUSE_CIRCLE_OUTLINED"), on_click=request_scan_cancel, disabled=True, color=WARN)
 
     def build_scan_view() -> ft.Control:
         selection_panel = _card(
             ft.Column(
                 controls=[
-                    _section_title("Quelle auswählen", "Ein kompletter Scan liest keine ausgeschlossenen Ordner und verändert keine Quelldateien."),
-                    ft.Row(controls=[directory_field, ft.Button(content="Ordner auswählen …", on_click=pick_directory)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    ft.Row(controls=[force_checkbox, no_embeddings_checkbox], wrap=True, spacing=18, run_spacing=6),
-                    ft.Row(controls=[extract_entities_checkbox], wrap=True),
-                    ft.Text("Sensible Dateien können Zugangsdaten enthalten. Nur bei bewusstem Bedarf einschalten.", size=11, color=WARN),
-                    ft.Row(controls=[include_ignored_checkbox, include_sensitive_checkbox], wrap=True, spacing=18, run_spacing=6),
-                    ft.Row(controls=[scan_start_button, scan_rebuild_button, scan_cancel_button, scan_progress, scan_status], wrap=True, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    rebuild_confirm_checkbox,
-                ],
-                spacing=13,
-            )
+                    ft.Row(controls=[_icon_tile(_safe_icon("FOLDER_SYNC_OUTLINED"), ACCENT, size=42), ft.Column(controls=[ft.Text("Datenquelle konfigurieren", size=17, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Inkrementeller Scan ist der sichere Standard.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12),
+                    ft.Divider(color=BORDER),
+                    ft.Text("QUELLVERZEICHNIS", size=10, weight=ft.FontWeight.BOLD, color=SUBTLE),
+                    ft.Row(controls=[directory_field, ft.Button(content="Auswählen", icon=ft.Icons.FOLDER_OPEN_OUTLINED, on_click=pick_directory)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Container(
+                        content=ft.Column(controls=[
+                            ft.Text("Indexierung starten", size=12, weight=ft.FontWeight.W_600, color=TEXT),
+                            ft.Text("Neue und geänderte Dateien werden eingelesen; unveränderte Inhalte bleiben bestehen.", size=10, color=MUTED),
+                            ft.Row(controls=[scan_start_button, scan_cancel_button, scan_progress], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True),
+                        ], spacing=8), padding=14, bgcolor=PANEL_ALT, border_radius=12,
+                    ),
+                    ft.Row(controls=[ft.Icon(_safe_icon("SHIELD_OUTLINED"), color=GOOD, size=16), ft.Text("Quelldateien werden nicht verändert.", size=10, color=GOOD)], spacing=8),
+                    scan_status,
+                    ft.ExpansionTile(
+                        title=ft.Text("Verarbeitungsoptionen", color=TEXT, size=12, weight=ft.FontWeight.W_600),
+                        subtitle=ft.Text("Embeddings, LLM-Extraktion, erneute Verarbeitung und Ausschlüsse", color=MUTED, size=10),
+                        expanded=False,
+                        controls=[ft.Container(content=ft.Column(controls=[force_checkbox, no_embeddings_checkbox, extract_entities_checkbox, include_ignored_checkbox, ft.Text("Sensible Dateien können Zugangsdaten enthalten.", size=10, color=WARN), include_sensitive_checkbox], spacing=9), padding=ft.Padding.only(left=12, right=12, bottom=12))],
+                        collapsed_text_color=MUTED, text_color=TEXT,
+                    ),
+                    ft.ExpansionTile(
+                        title=ft.Text("Destruktiver Neuaufbau", color=WARN, size=12, weight=ft.FontWeight.W_600),
+                        subtitle=ft.Text("Entfernt den Graph-Bestand des gewählten Roots vor der Neuindexierung", color=MUTED, size=10),
+                        expanded=False,
+                        controls=[ft.Container(content=ft.Column(controls=[ft.Text("Nur einsetzen, wenn ein vollständiger Neubau erforderlich ist.", size=10, color=WARN), rebuild_confirm_checkbox, scan_rebuild_button], spacing=8), padding=ft.Padding.only(left=12, right=12, bottom=12))],
+                        collapsed_text_color=MUTED, text_color=TEXT,
+                    ),
+                ], spacing=13, scroll=ft.ScrollMode.AUTO, expand=True,
+            ), padding=18,
         )
         logs_panel = _card(
             ft.Column(
                 controls=[
-                    ft.Row(controls=[_section_title("Scan-Protokoll", "Live-Logs und abschließende Importstatistik"), ft.Button(content="Protokoll leeren", on_click=lambda e: clear_scan_log())], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    ft.Container(content=scan_log, height=300, padding=8, bgcolor=BG, border_radius=8),
-                ],
-                spacing=12,
-            )
+                    ft.Row(controls=[ft.Column(controls=[ft.Text("Laufaktivität", size=17, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Fortschritt und Diagnostik des aktuellen Scans.", size=11, color=MUTED)], spacing=4, expand=True), ft.IconButton(icon=_safe_icon("DELETE_SWEEP_OUTLINED"), tooltip="Protokoll leeren", on_click=lambda e: clear_scan_log())], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
+                    ft.Container(content=ft.Row(controls=[_icon_tile(_safe_icon("TERMINAL_OUTLINED"), BLUE, size=34), ft.Column(controls=[ft.Text("Scan-Protokoll", size=11, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Letzte 350 Logzeilen", size=9, color=SUBTLE)], spacing=2)], spacing=9), padding=10, bgcolor=PANEL_ALT, border_radius=10),
+                    ft.Container(content=scan_log, height=405, padding=12, bgcolor="#080F18", border=ft.Border.all(1, BORDER), border_radius=10),
+                    ft.Row(controls=[ft.Icon(_safe_icon("PAUSE_CIRCLE_OUTLINED"), color=WARN, size=16), ft.Text("Abbrechen stoppt an einer sicheren Verarbeitungsgrenze; den gleichen Root später erneut starten.", size=10, color=MUTED, expand=True)], spacing=8),
+                ], spacing=12,
+            ), padding=18,
         )
-        return ft.Column(controls=[_section_title("Indexierung", "Dateien synchronisieren und für GraphRAG vorbereiten"), selection_panel, logs_panel], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)
+        registry_panel = _card(ft.Column(controls=[
+            ft.Row(controls=[ft.Column(controls=[ft.Text("Registrierte Datenquellen", size=17, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Roots erneut indexieren oder ausschließlich aus Neo4j entfernen.", size=11, color=MUTED)], spacing=4, expand=True), ft.Button(content="Aktualisieren", icon=_safe_icon("REFRESH_ROUNDED"), on_click=lambda e: page.run_task(load_dashboard_task))], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            source_registry_status,
+            source_root_list,
+        ], spacing=13), padding=18)
+        return ft.Column(
+            controls=[
+                ft.Row(
+                    controls=[
+                        ft.Container(content=selection_panel, expand=7, height=620),
+                        ft.Container(content=logs_panel, expand=5, height=620),
+                    ],
+                    spacing=14,
+                    # Fixed, equal-height viewport cards avoid STRETCH against the
+                    # unbounded cross-axis of this vertically scrollable parent.
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+                registry_panel,
+            ], spacing=15, scroll=ft.ScrollMode.AUTO, expand=True,
+        )
 
     def clear_scan_log() -> None:
         scan_log.controls.clear()
+        scan_log.controls.append(ft.Text("Protokoll geleert. Neue Scan-Aktivität erscheint hier.", size=11, color=MUTED))
         page.update()
 
-    # ---------------- Search view ----------------
-    def search_click(_: Any) -> None:
-        if not (search_query.value or "").strip():
-            search_status.value = "Bitte eine Frage oder Suchanfrage eingeben."
-            search_status.color = WARN
-            page.update()
-            return
-        search_status.value = "Suche läuft …"
-        search_status.color = WARN
-        search_results.controls.clear()
-        page.update()
-        page.run_task(search_task)
-
-    async def search_task() -> None:
-        query = (search_query.value or "").strip()
-        root_filter = (root_filter_search.value or "").strip()
-        try:
-            limit = max(5, min(20, int(result_limit.value or "8")))
-            search_results.controls.clear()
-            if global_search_checkbox.value:
-                result = await asyncio.to_thread(_run_global_search, query, limit, root_filter)
-                answer = str(result.get("answer") or "Keine Antwort verfügbar.")
-                search_results.controls.append(_card(
-                    ft.Column(
-                        controls=[
-                            ft.Text("Global Search · Antwort", size=15, weight=ft.FontWeight.W_600, color=TEXT),
-                            ft.Text(answer, size=13, color=TEXT, selectable=True),
-                            *([ft.Text("Offene Punkte: " + " · ".join(str(x) for x in result.get("uncertainties", [])[:5]),
-                                      size=11, color=WARN, selectable=True)] if result.get("uncertainties") else []),
-                            ft.Text(
-                                f"Status: {result.get('status', 'unknown')} · "
-                                f"Community-Zusammenfassungen: {result.get('community_summaries_used', len(result.get('communities') or []))} · "
-                                f"Quellabschnitte: {len(result.get('sources') or [])}",
-                                size=10, color=MUTED,
-                            ),
-                        ], spacing=9,
-                    ), padding=16,
-                ))
-                for community_index, community in enumerate(result.get("communities") or [], start=1):
-                    details = community.get("details") or {}
-                    summary = str(details.get("summary") or community.get("description") or "")
-                    key_points = details.get("key_points") or []
-                    caveats = details.get("caveats") or []
-                    source_paths = details.get("source_paths") or []
-                    community_controls: list[ft.Control] = [
-                        ft.Text(f"C{community_index} · {community.get('title') or 'Community'}", size=13, weight=ft.FontWeight.W_600, color=TEXT),
-                        ft.Text(summary, size=12, color=TEXT, selectable=True),
-                    ]
-                    if key_points:
-                        community_controls.append(ft.Text("Kernaussagen: " + " · ".join(str(x) for x in key_points[:4]), size=11, color=ACCENT, selectable=True))
-                    if caveats:
-                        community_controls.append(ft.Text("Einschränkungen: " + " · ".join(str(x) for x in caveats[:3]), size=11, color=WARN, selectable=True))
-                    if source_paths:
-                        community_controls.append(ft.Text("Stützende Quellen: " + " · ".join(str(x) for x in source_paths[:4]), size=10, color=MUTED, selectable=True))
-                    search_results.controls.append(_card(ft.Column(controls=community_controls, spacing=7), padding=14, bgcolor=PANEL_ALT))
-                sources = result.get("sources") or []
-                if sources:
-                    search_results.controls.append(_section_title("Zugehörige Originalquellen", "Die Quellabschnitte sind unabhängig von der LLM-Zusammenfassung abrufbar."))
-                    search_results.controls.extend(
-                        result_card(row, number, citation_label=f"S{number}")
-                        for number, row in enumerate(sources, start=1)
-                    )
-                elif not result.get("communities"):
-                    search_results.controls.append(ft.Text("Keine passenden Community-Zusammenfassungen oder Originalquellen gefunden.", size=12, color=MUTED))
-                summary_count = len(result.get("communities") or [])
-                source_count = len(sources)
-                search_status.value = f"Global Search abgeschlossen · {summary_count} Communities · {source_count} Quellabschnitte · Status {result.get('status', 'unknown')}"
-                search_status.color = GOOD if result.get("status") == "completed" else WARN
-            else:
-                results = await asyncio.to_thread(_run_search, query, limit, root_filter)
-                if not results:
-                    add_notice(search_results, "Keine Treffer. Prüfe, ob der Root indexiert wurde und ob die Begriffe im Volltext vorkommen.")
-                    search_status.value = "Suche abgeschlossen · keine Treffer"
-                    search_status.color = MUTED
-                else:
-                    search_results.controls.extend(result_card(row, number) for number, row in enumerate(results, start=1))
-                    search_status.value = f"{len(results)} Treffer · Hybrid Search kombiniert Volltext- und Vektortreffer."
-                    search_status.color = GOOD
-        except Exception as exc:
-            add_notice(search_results, f"Suche fehlgeschlagen: {exc}", BAD)
-            search_status.value = "Fehler bei der Suche"
-            search_status.color = BAD
-        page.update()
-
+    # Graph Explorer is for structural inspection only. Content Q&A remains an MCP capability.
     def open_in_graph(path: str) -> None:
         graph_query.value = path
         navigate("graph")
         page.run_task(graph_task)
 
-    def build_search_view() -> ft.Control:
-        controls = ft.Column(
-            controls=[
-                _section_title("Knowledge Search", "Semantische Suche und Volltextsuche mit überprüfbaren Quellen"),
-                _card(
-                    ft.Column(
-                        controls=[
-                            ft.Row(controls=[search_query, result_limit], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                            ft.Row(controls=[root_filter_search, ft.Button(content="Suchen", on_click=search_click)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                            global_search_checkbox,
-                            search_status,
-                        ],
-                        spacing=12,
-                    )
-                ),
-                search_results,
-            ],
-            spacing=15,
-            scroll=ft.ScrollMode.AUTO,
-            expand=True,
-        )
-        return controls
-
     # ---------------- Graph explorer ----------------
     def graph_click(_: Any) -> None:
         if not (graph_query.value or "").strip():
-            graph_status.value = "Bitte Dateiname oder Pfad eingeben."
+            graph_status.value = "Bitte einen Dateinamen oder relativen/absoluten Pfad eingeben."
             graph_status.color = WARN
             page.update()
             return
         graph_status.value = "Graph-Nachbarschaft wird geladen …"
         graph_status.color = WARN
         graph_results.controls.clear()
+        graph_results.controls.append(_card(ft.Row(controls=[ft.ProgressRing(width=18, height=18, stroke_width=2, color=ACCENT), ft.Text("Graph-Nachbarschaft wird aus Neo4j geladen …", size=12, color=MUTED)], spacing=10), bgcolor=PANEL_ALT))
         page.update()
         page.run_task(graph_task)
 
     async def graph_task() -> None:
         query = (graph_query.value or "").strip()
-        root_filter = (root_filter_search.value or "").strip()
+        root_filter = (graph_root_filter.value or "").strip()
         try:
             data = await asyncio.to_thread(_run_graph_query, query, root_filter)
             graph_results.controls.clear()
@@ -907,37 +1007,87 @@ def main(page: ft.Page) -> None:
         page.update()
 
     def build_graph_view() -> ft.Control:
-        return ft.Column(
-            controls=[
-                _section_title("Graph Explorer", "Dateiknoten und ihre gespeicherten Beziehungen nachvollziehen"),
-                _card(
-                    ft.Column(
-                        controls=[
-                            ft.Row(controls=[graph_query, ft.Button(content="Graph erkunden", on_click=graph_click)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                            graph_status,
-                        ],
-                        spacing=11,
-                    )
-                ),
-                graph_results,
-            ],
-            spacing=15,
-            scroll=ft.ScrollMode.AUTO,
-            expand=True,
-        )
+        galaxy_panel = graph3d_launch_panel()
+        explorer_controls = _card(ft.Column(controls=[
+            ft.Row(controls=[graph_query, ft.Button(content="Knoten laden", icon=_safe_icon("TRAVEL_EXPLORE_OUTLINED"), on_click=graph_click)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            graph_root_filter,
+            ft.Row(controls=[ft.Icon(_safe_icon("INFO_OUTLINE"), color=BLUE, size=15), graph_status], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ], spacing=11), padding=16)
+        return ft.Column(controls=[galaxy_panel, explorer_controls, graph_results], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
     # ---------------- Graph Intelligence view ----------------
+    def analysis_report_controls(report: dict[str, Any]) -> list[ft.Control]:
+        """Render the useful analysis summary first and keep raw JSON for diagnostics."""
+        controls: list[ft.Control] = []
+        gds = report.get("gds") or {}
+        counts = report.get("graph_stats") or {}
+        candidates = report.get("link_candidates_created_or_updated", 0)
+        insights = report.get("insights") or []
+        summary_items = [
+            ("Status", str(report.get("status", "–"))),
+            ("Analysierter Umfang", str(report.get("scope", "–"))),
+            ("Neue/aktualisierte Vorschläge", str(candidates)),
+            ("Analysebefunde", str(len(insights))),
+            ("Doppelte Inhaltsgruppen", str(report.get("duplicate_content_groups", 0))),
+            ("Dateien ohne vollständige Indexierung", str(report.get("unindexed_files", 0))),
+            ("Isolierte Entitäten", str(report.get("isolated_entities", 0))),
+            ("GDS", str(gds.get("status", "nicht ausgeführt"))),
+        ]
+        controls.append(ft.Row(
+            controls=[
+                _card(ft.Column(controls=[
+                    ft.Text(label.upper(), size=9, color=SUBTLE, weight=ft.FontWeight.BOLD),
+                    ft.Text(value, size=18, weight=ft.FontWeight.W_600, color=GOOD if label == "Status" and value == "completed" else TEXT, max_lines=2),
+                ], spacing=7), padding=14, bgcolor=PANEL_ALT, width=205, border_color=BORDER, radius=12)
+                for label, value in summary_items
+            ],
+            wrap=True,
+            spacing=10,
+            run_spacing=10,
+        ))
+        if report.get("notice"):
+            controls.append(ft.Text(str(report["notice"]), size=12, color=WARN, selectable=True))
+        if insights:
+            controls.append(_section_title("Wesentliche Befunde", "Aus dem aktuellen Analyselauf gespeicherte Einsichten"))
+            for insight in insights[:30]:
+                controls.append(_card(ft.Column(controls=[
+                    ft.Row(controls=[
+                        ft.Text(str(insight.get("title") or insight.get("kind") or "Befund"), size=13, weight=ft.FontWeight.W_600, color=TEXT, expand=True),
+                        ft.Text(f"Score: {insight.get('score', '–')}", size=10, color=ACCENT),
+                    ], spacing=8),
+                    ft.Text(str(insight.get("description") or "Keine weitere Beschreibung vorhanden."), size=12, color=MUTED, selectable=True),
+                    ft.Text(
+                        f"Typ: {insight.get('kind', '–')} · Stand: {'veraltet' if insight.get('is_stale') else 'aktuell'} · Aktualisiert: {insight.get('updated_at', '–')}",
+                        size=10, color=WARN if insight.get("is_stale") else MUTED,
+                    ),
+                ], spacing=7), padding=13, bgcolor=PANEL_ALT))
+        # The detailed JSON remains available for debugging and API-level diagnostics.
+        controls.append(ft.ExpansionTile(
+            title=ft.Text("Technische Detailausgabe (JSON)", color=TEXT, size=12),
+            controls=[ft.Container(
+                content=ft.Text(json.dumps(report, ensure_ascii=False, indent=2, default=str), size=10, color=MUTED, selectable=True),
+                padding=12,
+                bgcolor=BG,
+                border_radius=8,
+            )],
+            collapsed_text_color=MUTED,
+            text_color=TEXT,
+        ))
+        return controls
+
     async def graph_capabilities_task() -> None:
         graph_intelligence_status.value = "Prüfe Neo4j- und GDS-Fähigkeiten …"
         graph_intelligence_status.color = WARN
+        graph_intelligence_output.controls.clear()
+        graph_intelligence_output.controls.append(ft.Container(
+            content=ft.Row(controls=[ft.ProgressRing(width=18, height=18, stroke_width=2, color=ACCENT), ft.Text("Analysefähigkeiten werden geprüft …", size=12, color=MUTED)], spacing=10),
+            padding=14, bgcolor=PANEL_ALT, border_radius=8,
+        ))
         page.update()
         try:
             report = await asyncio.to_thread(_run_graph_capabilities)
             graph_intelligence_output.controls.clear()
-            graph_intelligence_output.controls.append(
-                _card(ft.Text(json.dumps(report, ensure_ascii=False, indent=2, default=str),
-                              size=11, color=TEXT, selectable=True))
-            )
+            graph_intelligence_output.controls.extend(analysis_report_controls(report))
             graph_intelligence_status.value = (
                 "GDS verfügbar" if report.get("gds", {}).get("available")
                 else "Neo4j erreichbar · GDS nicht erkannt; Cypher-Analysen bleiben verfügbar"
@@ -946,20 +1096,26 @@ def main(page: ft.Page) -> None:
         except Exception as exc:
             graph_intelligence_status.value = f"Fähigkeitsprüfung fehlgeschlagen: {exc}"
             graph_intelligence_status.color = BAD
+            graph_intelligence_output.controls.clear()
+            graph_intelligence_output.controls.append(_card(ft.Column(controls=[
+                ft.Row(controls=[ft.Icon(_safe_icon("ERROR_OUTLINE"), color=BAD, size=20), ft.Text("Fähigkeitsprüfung fehlgeschlagen", size=13, weight=ft.FontWeight.W_600, color=TEXT)], spacing=8),
+                ft.Text(str(exc), size=11, color=MUTED, selectable=True),
+            ], spacing=8), bgcolor=PANEL_ALT, border_color=BORDER))
         page.update()
 
     async def graph_analysis_task() -> None:
         graph_intelligence_status.value = "Graph wird analysiert. Bei großen Datenbeständen kann das dauern …"
         graph_intelligence_status.color = WARN
         graph_intelligence_output.controls.clear()
+        graph_intelligence_output.controls.append(ft.Container(
+            content=ft.Row(controls=[ft.ProgressRing(width=18, height=18, stroke_width=2, color=ACCENT), ft.Text("Regelbasierte Qualitätsprüfung und optionale GDS-Läufe laufen …", size=12, color=MUTED)], spacing=10),
+            padding=14, bgcolor=PANEL_ALT, border_radius=8,
+        ))
         page.update()
         try:
             report = await asyncio.to_thread(_run_graph_analysis, bool(gds_analysis_checkbox.value))
             graph_intelligence_output.controls.clear()
-            graph_intelligence_output.controls.append(
-                _card(ft.Text(json.dumps(report, ensure_ascii=False, indent=2, default=str),
-                              size=11, color=TEXT, selectable=True))
-            )
+            graph_intelligence_output.controls.extend(analysis_report_controls(report))
             graph_intelligence_status.value = (
                 f"Analyse {report.get('status', 'beendet')} · Lauf-ID {report.get('run_id', '–')}"
             )
@@ -967,18 +1123,29 @@ def main(page: ft.Page) -> None:
         except Exception as exc:
             graph_intelligence_status.value = f"Graphanalyse fehlgeschlagen: {exc}"
             graph_intelligence_status.color = BAD
-            graph_intelligence_output.controls.append(_card(ft.Text(str(exc), size=12, color=BAD, selectable=True)))
+            graph_intelligence_output.controls.clear()
+            graph_intelligence_output.controls.append(_card(ft.Column(controls=[
+                ft.Row(controls=[ft.Icon(_safe_icon("ERROR_OUTLINE"), color=BAD, size=20), ft.Text("Graphanalyse fehlgeschlagen", size=13, weight=ft.FontWeight.W_600, color=TEXT)], spacing=8),
+                ft.Text(str(exc), size=11, color=MUTED, selectable=True),
+                ft.Text("Prüfe zunächst die Neo4j-Verbindung und GDS-Capabilities. Externe LLM-Aufrufe sind für regelbasierte Prüfungen nicht erforderlich.", size=10, color=SUBTLE),
+                ft.Button(content="Erneut versuchen", icon=_safe_icon("REFRESH_ROUNDED"), on_click=lambda e: page.run_task(graph_analysis_task)),
+            ], spacing=8), bgcolor=PANEL_ALT, border_color=BORDER))
         page.update()
 
     async def graph_candidates_task() -> None:
-        graph_intelligence_status.value = "Lade offene Beziehungskandidaten …"
-        graph_intelligence_status.color = WARN
+        quality_status.value = "Lade offene Beziehungskandidaten …"
+        quality_status.color = WARN
+        quality_output.controls.clear()
+        quality_output.controls.append(ft.Container(
+            content=ft.Row(controls=[ft.ProgressRing(width=18, height=18, stroke_width=2, color=ACCENT), ft.Text("Beziehungsvorschläge aus Neo4j werden geladen …", size=12, color=MUTED)], spacing=10),
+            padding=14, bgcolor=PANEL_ALT, border_radius=8,
+        ))
         page.update()
         try:
             rows = await asyncio.to_thread(_run_graph_link_candidates, "proposed")
-            graph_intelligence_output.controls.clear()
+            quality_output.controls.clear()
             if not rows:
-                graph_intelligence_output.controls.append(
+                quality_output.controls.append(
                     _card(ft.Text(
                         "Keine offenen Vorschläge vorhanden. Starte zuerst eine Graphanalyse; Vorschläge benötigen erkannte Entitäten oder GDS-Strukturinformationen.",
                         size=12, color=MUTED, selectable=True,
@@ -999,16 +1166,34 @@ def main(page: ft.Page) -> None:
                         calibration_text = f"noch nicht kalibriert (Bewertungen: {method_reviewed}/5)"
                     else:
                         calibration_text = f"bisher {float(historical_rate):.0%} akzeptiert aus {method_reviewed} Bewertungen"
-                    details = (
-                        f"{subject}  —[{predicate}]→  {object_name}\n"
-                        f"Verfahren: {method} · Historische Annahmequote: {calibration_text}\n"
-                        f"Belege: {evidence_count} · Graph-Score: {score if score is not None else '–'}\n"
-                        f"Begründung: {row.get('reason') or '–'}\n"
-                        f"Kandidaten-ID: {candidate_id}"
+                    candidate_heading = ft.Row(
+                        controls=[
+                            ft.Column(controls=[
+                                _eyebrow("PROPOSED RELATIONSHIP", PURPLE),
+                                ft.Text(subject, size=14, weight=ft.FontWeight.W_600, color=TEXT, selectable=True),
+                            ], spacing=4, expand=True),
+                            _status_pill(f"{evidence_count} Beleg(e)", GOOD if evidence_count else WARN),
+                        ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     )
-                    graph_intelligence_output.controls.append(
+                    relation_line = ft.Container(
+                        content=ft.Row(controls=[
+                            ft.Container(content=ft.Text(subject, size=11, color=TEXT, max_lines=2), padding=10, bgcolor="#203247", border_radius=8, expand=True),
+                            ft.Column(controls=[ft.Icon(_safe_icon("ARROW_FORWARD_ROUNDED"), color=ACCENT, size=18), ft.Text(predicate, size=9, color=ACCENT, text_align=ft.TextAlign.CENTER)], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                            ft.Container(content=ft.Text(object_name, size=11, color=TEXT, max_lines=2), padding=10, bgcolor="#203247", border_radius=8, expand=True),
+                        ], spacing=9, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        padding=12, bgcolor="#0D1723", border_radius=11,
+                    )
+                    quality_output.controls.append(
                         _card(ft.Column(controls=[
-                            ft.Text(details, size=12, color=TEXT, selectable=True),
+                            candidate_heading,
+                            relation_line,
+                            ft.Row(controls=[
+                                _status_pill(f"Methode: {method}", BLUE),
+                                _status_pill(f"Score: {score if score is not None else '–'}", PURPLE),
+                                _status_pill(f"Historie: {calibration_text}", MUTED),
+                            ], spacing=8, wrap=True),
+                            ft.Text(str(row.get('reason') or 'Keine Begründung hinterlegt.'), size=11, color=MUTED, selectable=True),
+                            ft.ExpansionTile(title=ft.Text("Technische Metadaten", size=10, color=MUTED), controls=[ft.Container(content=ft.Text(f"Kandidaten-ID: {candidate_id}\nMethode: {method}\nGraph-Score: {score if score is not None else '–'}", size=10, color=SUBTLE, selectable=True), padding=10)], collapsed_text_color=MUTED, text_color=TEXT),
                             ft.Row(controls=[
                                 ft.Button(
                                     content="Akzeptieren",
@@ -1034,53 +1219,61 @@ def main(page: ft.Page) -> None:
                             ], wrap=True, spacing=8),
                         ], spacing=8))
                     )
-            graph_intelligence_status.value = (
+            quality_status.value = (
                 f"{len(rows)} offene Vorschläge · Feedback wird in Neo4j gespeichert und beeinflusst weitere Analysen"
             )
-            graph_intelligence_status.color = GOOD if rows else MUTED
+            quality_status.color = GOOD if rows else MUTED
         except Exception as exc:
-            graph_intelligence_status.value = f"Kandidaten konnten nicht geladen werden: {exc}"
-            graph_intelligence_status.color = BAD
+            quality_status.value = f"Kandidaten konnten nicht geladen werden: {exc}"
+            quality_status.color = BAD
+            quality_output.controls.clear()
+            quality_output.controls.append(_card(ft.Column(controls=[
+                ft.Row(controls=[ft.Icon(_safe_icon("ERROR_OUTLINE"), color=BAD, size=20), ft.Text("Beziehungsvorschläge konnten nicht geladen werden", size=13, weight=ft.FontWeight.W_600, color=TEXT)], spacing=8),
+                ft.Text(str(exc), size=11, color=MUTED, selectable=True),
+                ft.Text("Die übrigen Graph-Analysen sind davon unabhängig. Du kannst es erneut versuchen.", size=10, color=SUBTLE),
+                ft.Button(content="Erneut laden", icon=_safe_icon("REFRESH_ROUNDED"), on_click=lambda e: page.run_task(graph_candidates_task)),
+            ], spacing=8), bgcolor=PANEL_ALT, border_color=BORDER))
         page.update()
 
     async def review_graph_candidate_task(candidate_id: str, decision: str) -> None:
-        graph_intelligence_status.value = f"Speichere Entscheidung: {decision} …"
-        graph_intelligence_status.color = WARN
+        quality_status.value = f"Speichere Entscheidung: {decision} …"
+        quality_status.color = WARN
         page.update()
         try:
             result = await asyncio.to_thread(_run_review_graph_link_candidate, candidate_id, decision)
-            graph_intelligence_status.value = (
+            quality_status.value = (
                 f"Vorschlag {decision}: {result.get('subject_name', result.get('subject_id', '?'))} → "
                 f"{result.get('object_name', result.get('object_id', '?'))}"
             )
-            graph_intelligence_status.color = GOOD
+            quality_status.color = GOOD
             await graph_candidates_task()
         except Exception as exc:
-            graph_intelligence_status.value = f"Entscheidung konnte nicht gespeichert werden: {exc}"
-            graph_intelligence_status.color = BAD
+            quality_status.value = f"Entscheidung konnte nicht gespeichert werden: {exc}"
+            quality_status.color = BAD
             page.update()
 
+    def build_quality_view() -> ft.Control:
+        candidates_panel = _card(ft.Column(controls=[
+            ft.Row(controls=[_icon_tile(ft.Icons.LINK_OUTLINED, PURPLE, size=38), ft.Column(controls=[ft.Text("Offene Beziehungsvorschläge", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Belege, Ableitungsmethode und Akzeptanzhistorie sind getrennt sichtbar.", size=11, color=MUTED)], spacing=4, expand=True), ft.Button(content="Aktualisieren", icon=_safe_icon("REFRESH_ROUNDED"), on_click=lambda e: page.run_task(graph_candidates_task))], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Divider(color=BORDER),
+            quality_status,
+        ], spacing=12), padding=17)
+        return ft.Column(controls=[candidates_panel, quality_output], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
+
     def build_graph_intelligence_view() -> ft.Control:
-        return ft.Column(
-            controls=[
-                _section_title("Graph Intelligence", "Neo4j analysiert gespeichertes Wissen und hält Analyseergebnisse im Graphen fest."),
-                _card(ft.Column(controls=[
-                    ft.Text("Regelbasierte Graphanalyse", size=15, weight=ft.FontWeight.W_600, color=TEXT),
-                    ft.Text("Nutzt Cypher und optional Neo4j GDS für Duplikate, Abdeckungslücken, Communities, Zentralität, strukturelle Ähnlichkeit und prüfbare Beziehungskandidaten. Entscheidungen werden in Neo4j gespeichert.", size=12, color=MUTED),
-                    gds_analysis_checkbox,
-                    ft.Row(controls=[
-                        ft.Button(content="Neo4j / GDS prüfen", on_click=lambda e: page.run_task(graph_capabilities_task)),
-                        ft.Button(content="Graph analysieren", on_click=lambda e: page.run_task(graph_analysis_task)),
-                        ft.Button(content="Beziehungsvorschläge anzeigen", on_click=lambda e: page.run_task(graph_candidates_task)),
-                    ], wrap=True, spacing=10),
-                    graph_intelligence_status,
-                ], spacing=10)),
-                _card(ft.Column(controls=[
-                    _section_title("Analyseergebnisse", "Ergebnisse sind nachvollziehbar, wiederholbar und in Neo4j gespeichert."),
-                    graph_intelligence_output,
-                ], spacing=10)),
-            ], spacing=15, scroll=ft.ScrollMode.AUTO, expand=True
-        )
+        config_panel = _card(ft.Column(controls=[
+            ft.Row(controls=[_icon_tile(ft.Icons.ACCOUNT_TREE_OUTLINED, ACCENT, size=38), ft.Column(controls=[ft.Text("Analyse konfigurieren", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Regelbasierte Prüfungen laufen unabhängig von GDS; GDS ergänzt sie optional.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12),
+            ft.Divider(color=BORDER),
+            gds_analysis_checkbox,
+            ft.Row(controls=[ft.Button(content="Capabilities prüfen", icon=_safe_icon("FACT_CHECK_OUTLINED"), on_click=lambda e: page.run_task(graph_capabilities_task)), ft.Button(content="Analyse ausführen", icon=_safe_icon("PLAY_ARROW_ROUNDED"), on_click=lambda e: page.run_task(graph_analysis_task))], wrap=True, spacing=10),
+            ft.Row(controls=[ft.Icon(_safe_icon("INFO_OUTLINE"), color=BLUE, size=15), graph_intelligence_status], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ], spacing=12), padding=18)
+        results_panel = _card(ft.Column(controls=[
+            ft.Row(controls=[ft.Column(controls=[ft.Text("Ergebnisse & Befunde", size=17, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Kennzahlen und verwertbare Befunde zuerst; Rohdaten nur bei Bedarf.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=10),
+            ft.Divider(color=BORDER),
+            graph_intelligence_output,
+        ], spacing=12), padding=18)
+        return ft.Column(controls=[config_panel, results_panel], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
     # ---------------- Connection view ----------------
     def open_env_file(_: Any) -> None:
@@ -1105,6 +1298,11 @@ def main(page: ft.Page) -> None:
         global_status.color = WARN
         connection_status.value = "Verbindung wird geprüft …"
         connection_status.color = WARN
+        connection_details.controls.clear()
+        connection_details.controls.append(ft.Container(
+            content=ft.Row(controls=[ft.ProgressRing(width=18, height=18, stroke_width=2, color=ACCENT), ft.Text("Neo4j und Embedding-Endpunkt werden getestet …", size=12, color=MUTED)], spacing=10),
+            padding=14, bgcolor=PANEL_ALT, border_radius=8,
+        ))
         page.update()
         try:
             report = await asyncio.to_thread(_run_doctor, True)
@@ -1114,9 +1312,15 @@ def main(page: ft.Page) -> None:
             connection_details.controls.append(_card(ft.Text(json.dumps(report, ensure_ascii=False, indent=2, default=str), size=11, color=TEXT, selectable=True)))
             global_status.value = "Neo4j verbunden"
             global_status.color = GOOD
+            try:
+                header_status_dot.bgcolor = GOOD
+            except NameError:
+                pass
             stats = report.get("stats") or {}
             for key in stat_values:
                 stat_values[key].value = str(stats.get(key, 0))
+            for key, control in quality_stat_values.items():
+                control.value = str(stats.get(key, 0))
         except Exception as exc:
             connection_status.value = f"Verbindung fehlgeschlagen: {exc}"
             connection_status.color = BAD
@@ -1124,172 +1328,206 @@ def main(page: ft.Page) -> None:
             connection_details.controls.append(_card(ft.Text(str(exc), color=BAD, size=12, selectable=True)))
             global_status.value = "Neo4j nicht erreichbar"
             global_status.color = BAD
+            try:
+                header_status_dot.bgcolor = BAD
+            except NameError:
+                pass
         page.update()
 
     def build_connection_view() -> ft.Control:
         rows: list[ft.Control] = []
         for key, value in _settings_preview().items():
-            rows.append(
-                ft.Row(
-                    controls=[ft.Text(key, size=12, color=MUTED, width=170), ft.Text(value, size=12, color=TEXT, selectable=True, expand=True)],
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=12,
-                )
-            )
-        config_panel = _card(
-            ft.Column(
-                controls=[
-                    _section_title("Konfiguration", "Werte werden aus der Projektdatei .env eingelesen; Passwörter werden nicht angezeigt."),
-                    *rows,
-                    ft.Button(content=".env / Beispielkonfiguration öffnen", on_click=open_env_file),
-                ],
-                spacing=11,
-            )
-        )
-        health_panel = _card(
-            ft.Column(
-                controls=[
-                    _section_title("Systemtest", "Testet Neo4j und das konfigurierte Embedding-Modell."),
-                    connection_status,
-                    ft.Button(content="Neo4j + Embeddings testen", on_click=lambda e: page.run_task(doctor_task)),
-                    connection_details,
-                ],
-                spacing=12,
-            )
-        )
-        return ft.Column(controls=[_section_title("Verbindung & Einstellungen", "Zugangsdaten verbleiben lokal in .env"), config_panel, health_panel], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)
+            rows.append(ft.Container(content=ft.Row(controls=[ft.Text(key, size=11, color=MUTED, width=175), ft.Text(value, size=11, color=TEXT, selectable=True, expand=True)], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=12), padding=ft.Padding.symmetric(vertical=7), border=ft.Border.only(bottom=ft.BorderSide(1, BORDER))))
+        config_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("TUNE_OUTLINED"), BLUE, size=42), ft.Column(controls=[_eyebrow("CONFIGURATION"), ft.Text("Projektkonfiguration", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Werte aus .env; geheime Zugangsdaten werden nicht angezeigt.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), *rows, ft.Button(content="Konfiguration öffnen", icon=_safe_icon("EDIT_NOTE_OUTLINED"), on_click=open_env_file)], spacing=8), padding=18)
+        mcp_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("CABLE_OUTLINED"), ACCENT, size=42), ft.Column(controls=[_eyebrow("EXTERNAL ACCESS"), ft.Text("MCP für externe LLMs", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Der MCP-Prozess wird vom jeweiligen MCP-Client gestartet.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), ft.Row(controls=[_status_pill("Transport: stdio", BLUE), _status_pill("Clientstatus nicht direkt ermittelbar", WARN)], wrap=True, spacing=8), ft.Text("Die Werkzeuge stellen u. a. Such- und Kontextzugriff, Graph-Statistiken, Analysefunktionen, Beziehungsvorschläge und Quelleninformationen bereit. Die Desktop-GUI selbst enthält bewusst keine Chat-/RAG-Oberfläche.", size=11, color=MUTED, selectable=True)], spacing=12), padding=18)
+        health_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("MONITOR_HEART_OUTLINED"), GOOD, size=42), ft.Column(controls=[_eyebrow("HEALTH CHECK"), ft.Text("Verbindung & Laufzeit", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Neo4j und das konfigurierte Embedding-Modell testen.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), ft.Row(controls=[connection_status, ft.Container(width=8), ft.Button(content="Systemtest starten", icon=_safe_icon("PLAY_ARROW_ROUNDED"), on_click=lambda e: page.run_task(doctor_task))], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True), connection_details], spacing=12), padding=18)
+        return ft.Column(controls=[ft.Row(controls=[ft.Container(content=config_panel, expand=7), ft.Container(content=ft.Column(controls=[mcp_panel, health_panel], spacing=14), expand=5)], spacing=14, vertical_alignment=ft.CrossAxisAlignment.START)], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
-    # ---------------- Main navigation ----------------
+    # ---------------- Main navigation & desktop shell ----------------
     view_builders: dict[str, Callable[[], ft.Control]] = {
         "dashboard": build_dashboard_view,
         "scan": build_scan_view,
-        "search": build_search_view,
         "graph": build_graph_view,
+        "quality": build_quality_view,
         "intelligence": build_graph_intelligence_view,
         "connection": build_connection_view,
     }
+    # Each page owns several long-lived Flet controls (logs, statuses and result
+    # columns). Rebuilding a page on every navigation re-parented those same
+    # controls into new parents and could result in blank/gray native surfaces.
+    view_cache: dict[str, ft.Control] = {}
+
     page_titles = {
-        "dashboard": "Dashboard",
-        "scan": "Indexierung",
-        "search": "Knowledge Search",
-        "graph": "Graph Explorer",
-        "intelligence": "Graph Intelligence",
-        "connection": "Verbindung & Einstellungen",
+        "dashboard": ("Übersicht", "Graph-Bestand, Datenabdeckung und Qualität"),
+        "scan": ("Datenquellen", "Roots verwalten und Indexierung überwachen"),
+        "graph": ("Graph Explorer", "Knoten, Kanten und Quellenbeziehungen inspizieren"),
+        "quality": ("Qualität & Beziehungen", "Evidenz prüfen und Vorschläge kontrolliert entscheiden"),
+        "intelligence": ("Graph-Analysen", "Graph-Qualität und Struktur mit Cypher und GDS untersuchen"),
+        "connection": ("System & MCP", "Verbindungen, Konfiguration und externe LLM-Anbindung"),
     }
+    nav_items = [
+        ("dashboard", "Übersicht", "COMMAND", ft.Icons.DASHBOARD_OUTLINED),
+        ("scan", "Datenquellen", "KNOWLEDGE BASE", ft.Icons.FOLDER_OPEN_OUTLINED),
+        ("graph", "Graph Explorer", "KNOWLEDGE BASE", ft.Icons.HUB_OUTLINED),
+        ("quality", "Qualität & Beziehungen", "INTELLIGENCE", ft.Icons.LINK_OUTLINED),
+        ("intelligence", "Graph-Analysen", "INTELLIGENCE", ft.Icons.INSIGHTS_OUTLINED),
+        ("connection", "System & MCP", "SYSTEM", ft.Icons.SETTINGS_OUTLINED),
+    ]
+    nav_tiles: dict[str, tuple[ft.Container, ft.Container, ft.Icon, ft.Text]] = {}
 
     def navigate(key: str) -> None:
-        header_title.value = page_titles[key]
-        view_host.content = view_builders[key]()
+        if key not in view_builders:
+            return
+        title, subtitle = page_titles[key]
+        header_title.value = title
+        header_subtitle.value = subtitle
+        if key not in view_cache:
+            view_cache[key] = view_builders[key]()
+        view_host.content = view_cache[key]
+        for nav_key, (tile, accent_bar, icon_control, label_control) in nav_tiles.items():
+            active = nav_key == key
+            tile.bgcolor = PANEL_ALT if active else SIDEBAR
+            tile.border = ft.Border.all(1, "#2D4D57" if active else SIDEBAR)
+            accent_bar.bgcolor = ACCENT if active else SIDEBAR
+            icon_control.color = ACCENT if active else MUTED
+            label_control.color = TEXT if active else MUTED
+            label_control.weight = ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL
         page.update()
+        if key == "quality":
+            page.run_task(graph_candidates_task)
+        elif key == "intelligence":
+            page.run_task(graph_capabilities_task)
 
-    nav_items = [
-        ("dashboard", "01  Dashboard"),
-        ("scan", "02  Scan & Import"),
-        ("search", "03  Knowledge Search"),
-        ("graph", "04  Graph Explorer"),
-        ("intelligence", "05  Graph Intelligence"),
-        ("connection", "06  Verbindung"),
-    ]
-    nav_buttons = ft.Column(
-        controls=[
-            ft.Button(content=label, on_click=lambda e, k=key: navigate(k), width=205)
-            for key, label in nav_items
-        ],
-        spacing=7,
-    )
+    nav_controls: list[ft.Control] = []
+    section_for_key = {"dashboard": "COMMAND", "scan": "KNOWLEDGE BASE", "graph": "KNOWLEDGE BASE", "quality": "INTELLIGENCE", "intelligence": "INTELLIGENCE", "connection": "SYSTEM"}
+    previous_section = None
+    for nav_key, nav_label, section, nav_icon in nav_items:
+        if section != previous_section:
+            nav_controls.append(ft.Container(content=_eyebrow(section, SUBTLE), padding=ft.Padding.only(left=12, top=18 if previous_section else 4, bottom=7)))
+            previous_section = section
+        accent_bar = ft.Container(width=3, height=25, bgcolor=SIDEBAR, border_radius=3)
+        icon_control = ft.Icon(nav_icon, size=19, color=MUTED)
+        label_control = ft.Text(nav_label, size=12, color=MUTED, weight=ft.FontWeight.NORMAL)
+        tile = ft.Container(
+            content=ft.Row(controls=[accent_bar, icon_control, ft.Container(content=label_control, expand=True)], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=11),
+            bgcolor=SIDEBAR,
+            border=ft.Border.all(1, SIDEBAR),
+            border_radius=10,
+            on_click=lambda e, k=nav_key: navigate(k),
+            ink=True,
+        )
+        nav_tiles[nav_key] = (tile, accent_bar, icon_control, label_control)
+        nav_controls.append(tile)
+
     sidebar = ft.Container(
-        width=245,
+        width=258,
         bgcolor=SIDEBAR,
-        padding=18,
+        padding=ft.Padding.symmetric(horizontal=14, vertical=16),
+        border=ft.Border.only(right=ft.BorderSide(1, BORDER)),
         content=ft.Column(
             controls=[
                 ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Text("WIN / KG", size=22, weight=ft.FontWeight.BOLD, color=ACCENT),
-                            ft.Text("WINDOWS KNOWLEDGE GRAPH", size=9, color=MUTED, weight=ft.FontWeight.BOLD),
-                        ],
-                        spacing=3,
-                    ),
-                    padding=ft.Padding.only(left=5, top=6, bottom=25),
+                    content=ft.Row(controls=[
+                        ft.Container(content=ft.Icon(ft.Icons.HUB_OUTLINED, color="#08131A", size=25), width=48, height=48, alignment=ft.Alignment(0, 0), bgcolor=ACCENT, border_radius=15),
+                        ft.Column(controls=[ft.Text("KNOWLEDGE", size=14, weight=ft.FontWeight.BOLD, color=TEXT), ft.Text("GRAPH / CONTROL PLANE", size=9, color=ACCENT, weight=ft.FontWeight.BOLD)], spacing=4, expand=True),
+                    ], spacing=11, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=ft.Padding.symmetric(horizontal=7, vertical=12),
                 ),
-                nav_buttons,
-                ft.Container(expand=True),
                 ft.Divider(color=BORDER),
-                ft.Text("Company Knowledge Graph", size=11, color=TEXT),
-                ft.Text("Neo4j · GDS · Hybrid Search · MCP", size=10, color=MUTED),
-                ft.Text("Keine Quelldateien werden verändert.", size=10, color=MUTED),
-            ],
-            expand=True,
+                ft.Column(controls=nav_controls, spacing=2),
+                ft.Container(expand=True),
+                _card(ft.Column(controls=[
+                    ft.Row(controls=[ft.Container(width=7, height=7, bgcolor=ACCENT, border_radius=4), ft.Text("GRAPH ENGINE", size=9, weight=ft.FontWeight.BOLD, color=ACCENT)], spacing=7),
+                    ft.Text("Neo4j-first architecture", size=11, weight=ft.FontWeight.W_600, color=TEXT),
+                    ft.Text("Native graph · GDS · MCP", size=10, color=MUTED),
+                    ft.Text("Keine Quelldateien werden verändert.", size=9, color=SUBTLE),
+                ], spacing=7), padding=13, bgcolor="#0E1E2A", border_color="#203947", radius=12),
+                ft.Text(f"COMPANY KNOWLEDGE GRAPH  •  {__version__}", size=8, color=SUBTLE, text_align=ft.TextAlign.CENTER),
+            ], expand=True, spacing=4,
         ),
     )
 
+    header_status_dot = ft.Container(width=7, height=7, bgcolor=SUBTLE, border_radius=4)
     header = ft.Container(
-        padding=ft.Padding.symmetric(horizontal=24, vertical=16),
-        bgcolor=SIDEBAR,
-        content=ft.Row(
-            controls=[
-                ft.Column(controls=[header_title, header_subtitle], spacing=3, expand=True),
-                global_status,
-            ],
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=14,
-        ),
+        padding=ft.Padding.symmetric(horizontal=26, vertical=15),
+        bgcolor=HEADER,
+        border=ft.Border.only(bottom=ft.BorderSide(1, BORDER)),
+        content=ft.Row(controls=[
+            ft.Column(controls=[_eyebrow("COMPANY KNOWLEDGE GRAPH", SUBTLE), header_title, header_subtitle], spacing=3, expand=True),
+            ft.Container(content=ft.Row(controls=[header_status_dot, global_status], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER), bgcolor=PANEL_ALT, border=ft.Border.all(1, BORDER), border_radius=20, padding=ft.Padding.symmetric(horizontal=12, vertical=8)),
+            ft.IconButton(icon=_safe_icon("REFRESH_ROUNDED"), tooltip="Graph-Bestand aktualisieren", icon_color=ACCENT, on_click=lambda e: page.run_task(load_dashboard_task)),
+            ft.IconButton(icon=ft.Icons.SETTINGS_OUTLINED, tooltip="System & MCP", icon_color=MUTED, on_click=lambda e: navigate("connection")),
+        ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=14),
     )
     main_area = ft.Column(controls=[header, view_host], spacing=0, expand=True)
     page.add(ft.Row(controls=[sidebar, main_area], spacing=0, expand=True, vertical_alignment=ft.CrossAxisAlignment.STRETCH))
-    view_host.content = build_dashboard_view()
-    page.update()
+    navigate("dashboard")
+
+    def root_entry_card(path: str, name: str, signature: str) -> ft.Control:
+        return _card(
+            ft.Row(
+                controls=[
+                    _icon_tile(_safe_icon("FOLDER_SPECIAL_OUTLINED"), BLUE, size=40),
+                    ft.Column(
+                        controls=[
+                            ft.Text(name, size=13, weight=ft.FontWeight.W_600, color=TEXT),
+                            ft.Text(path, size=10, color=MUTED, selectable=True),
+                            _status_pill(signature, ACCENT),
+                        ], spacing=5, expand=True,
+                    ),
+                    ft.Button(content="Aktualisieren", icon=_safe_icon("SYNC_ROUNDED"), on_click=lambda e, p=path: use_root_for_scan(p)),
+                    ft.Button(content="Aus Index löschen", icon=_safe_icon("DELETE_OUTLINE"), on_click=lambda e, p=path, n=name: request_delete_root(p, n), color=BAD),
+                ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ), padding=12, bgcolor=PANEL_ALT, border_color=BORDER, radius=12,
+        )
 
     async def load_dashboard_data_into_controls() -> None:
         try:
             stats, roots = await asyncio.to_thread(_load_dashboard_data)
             for key in stat_values:
                 stat_values[key].value = str(stats.get(key, 0))
-            overview_message.value = "Neo4j erreichbar · Der Graph-Bestand wurde aktualisiert."
+            for key, control in quality_stat_values.items():
+                control.value = str(stats.get(key, 0))
+            overview_message.value = "Graph-Bestand aktualisiert."
             overview_message.color = GOOD
             global_status.value = "Neo4j verbunden"
             global_status.color = GOOD
-            root_list.controls.clear()
+            try:
+                header_status_dot.bgcolor = GOOD
+            except NameError:
+                pass
+            source_root_list.controls.clear()
             if not roots:
-                root_list.controls.append(ft.Text("Noch keine Roots indexiert. Öffne Scan & Import und starte den ersten Scan.", size=12, color=MUTED))
+                empty_text = "Noch keine Roots indexiert. Wähle ein Verzeichnis und starte den ersten Scan."
+                source_root_list.controls.append(_card(ft.Text(empty_text, size=12, color=MUTED), bgcolor=PANEL_ALT, border_color=BORDER, radius=10))
+                source_registry_status.value = "Keine Roots registriert"
+                source_registry_status.color = MUTED
             else:
                 for root in roots:
                     path = str(root.get("path") or "")
                     name = str(root.get("name") or Path(path).name or path)
                     sig = str(root.get("embedding_signature") or "Embedding unbekannt")
-                    root_list.controls.append(
-                        _card(
-                            ft.Row(
-                                controls=[
-                                    ft.Column(
-                                        controls=[ft.Text(name, size=13, weight=ft.FontWeight.W_600, color=TEXT), ft.Text(path, size=10, color=MUTED, selectable=True), ft.Text(sig, size=10, color=ACCENT)],
-                                        spacing=4,
-                                        expand=True,
-                                    ),
-                                    ft.Button(content="Aktualisieren", on_click=lambda e, p=path: use_root_for_scan(p)),
-                                    ft.Button(
-                                        content="Aus Index löschen",
-                                        on_click=lambda e, p=path, n=name: request_delete_root(p, n),
-                                        color=BAD,
-                                    ),
-                                ],
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                spacing=10,
-                            ),
-                            padding=12,
-                            bgcolor=PANEL_ALT,
-                        )
-                    )
+                    source_root_list.controls.append(root_entry_card(path, name, sig))
+                source_registry_status.value = f"{len(roots)} registrierte Roots"
+                source_registry_status.color = GOOD
         except Exception as exc:
             overview_message.value = f"Neo4j nicht erreichbar oder Konfiguration unvollständig: {exc}"
             overview_message.color = BAD
             global_status.value = "Verbindung prüfen"
             global_status.color = BAD
+            try:
+                header_status_dot.bgcolor = BAD
+            except NameError:
+                pass
             for key in stat_values:
                 stat_values[key].value = "–"
-            if not root_list.controls:
-                root_list.controls.append(ft.Text("Nach erfolgreicher Verbindung erscheinen hier die indexierten Roots.", size=12, color=MUTED))
+            for control in quality_stat_values.values():
+                control.value = "–"
+            source_registry_status.value = "Root-Registry konnte nicht geladen werden"
+            source_registry_status.color = BAD
+            if not source_root_list.controls:
+                source_root_list.controls.append(_card(ft.Text("Die Root-Registry wird nach erfolgreicher Verbindung geladen.", size=12, color=MUTED), bgcolor=PANEL_ALT, border_color=BORDER, radius=10))
         page.update()
 
     async def load_dashboard_task() -> None:
@@ -1306,28 +1544,27 @@ def main(page: ft.Page) -> None:
 
     async def delete_root_task(path: str, name: str) -> None:
         if scan_state["running"]:
-            overview_message.value = "Ordner kann während eines laufenden Scans nicht entfernt werden."
-            overview_message.color = WARN
+            source_registry_status.value = "Ordner kann während eines laufenden Scans nicht entfernt werden."
+            source_registry_status.color = WARN
             page.update()
             return
         if delete_state["running"]:
             return
         delete_state["running"] = True
-        overview_message.value = f"Entferne den Index für '{name}' aus Neo4j …"
-        overview_message.color = WARN
+        source_registry_status.value = f"Entferne den Index für '{name}' aus Neo4j …"
+        source_registry_status.color = WARN
         page.update()
         try:
             await asyncio.to_thread(_run_delete_root, path)
             await load_dashboard_data_into_controls()
-            overview_message.value = (
-                f"'{name}' wurde aus dem Knowledge Graph entfernt. "
-                "Die Dateien auf dem Datenträger wurden nicht verändert."
+            source_registry_status.value = (
+                f"'{name}' wurde aus dem Knowledge Graph entfernt. Die Quelldateien blieben unverändert."
             )
-            overview_message.color = GOOD
+            source_registry_status.color = GOOD
             logging.getLogger("winkg.gui").info("Root-Löschung in der GUI abgeschlossen: %s", path)
         except Exception as exc:
-            overview_message.value = f"Ordner konnte nicht aus dem Index entfernt werden: {exc}"
-            overview_message.color = BAD
+            source_registry_status.value = f"Ordner konnte nicht aus dem Index entfernt werden: {exc}"
+            source_registry_status.color = BAD
             logging.getLogger("winkg.gui").exception("Entfernen eines indexierten Roots fehlgeschlagen: %s", path)
         finally:
             delete_state["running"] = False
@@ -1335,8 +1572,8 @@ def main(page: ft.Page) -> None:
 
     def request_delete_root(path: str, name: str) -> None:
         if scan_state["running"]:
-            overview_message.value = "Bitte warte, bis der laufende Scan beendet ist."
-            overview_message.color = WARN
+            source_registry_status.value = "Bitte warte, bis der laufende Scan beendet ist."
+            source_registry_status.color = WARN
             page.update()
             return
         dialog: ft.AlertDialog

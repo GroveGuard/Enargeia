@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neo4j-windows-knowledge-graph"
-version = "0.1.0"
+version = "1.0.0"
 description = "Neo4j-first Company Knowledge Graph with hybrid search and graph intelligence"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["flet>=0.82.2"]
+gui = ["flet>=1.0.4", "pywebview>=5.4"]
 mcp = ["mcp>=1.9,<2"]
 docling = ["docling>=2.0"]
 test = ["pytest>=8.0"]
@@ -36,3 +36,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+winkg = ["ui/*.html"]

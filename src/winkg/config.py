@@ -60,7 +60,7 @@ class Settings:
     llm_api_key: str = _get("LLM_API_KEY", "ollama")
     llm_timeout_seconds: int = _int("LLM_TIMEOUT_SECONDS", 180, 1)
     entity_extraction_enabled: bool = _bool("ENTITY_EXTRACTION_ENABLED", False)
-    autonomous_quality_enabled: bool = _bool("AUTONOMOUS_QUALITY_ENABLED", True)
+    autonomous_quality_enabled: bool = _bool("AUTONOMOUS_QUALITY_ENABLED", False)
     quality_max_candidates_per_run: int = _int("QUALITY_MAX_CANDIDATES_PER_RUN", 20, 1)
     quality_batch_size: int = _int("QUALITY_BATCH_SIZE", 5, 1)
     quality_min_confidence: float = float(_get("QUALITY_MIN_CONFIDENCE", "0.82"))

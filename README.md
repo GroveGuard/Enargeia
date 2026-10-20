@@ -2,6 +2,8 @@
 
 Ein ausführbares Python-Projekt, das Windows-Verzeichnisse rekursiv inventarisiert, lesbare Inhalte extrahiert und mehrere Quellen zu einem nachvollziehbaren Unternehmenswissensgraphen in Neo4j verbindet. Es bietet inkrementelle Synchronisierung, Hybrid Search (Vektor + Volltext), Quellenpfade, optionale LLM-Entity-Extraktion und einen MCP-Server für Agents wie Claude Code, Hermes oder andere MCP-Clients.
 
+**Aktuelle Release-Version: `1.0.0`**
+
 ## Funktionen
 
 - Rekursiver Scan und inkrementelle Aktualisierung: unveränderte Dateien werden übersprungen; geänderte Dateien erhalten neue Chunks; gelöschte Dateien werden bei einem vollständigen Scan entfernt.
@@ -15,10 +17,10 @@ Ein ausführbares Python-Projekt, das Windows-Verzeichnisse rekursiv inventarisi
 - Neo4j-gestützter LLM-Extraktionscache: erfolgreiche Ergebnisse werden nach Inhaltshash, Chat-Modell-Endpunkt und Prompt-Version in `KGExtractionCache` gespeichert. Identische Chunks können über Dateien und Roots hinweg wiederverwendet werden. Cache-Treffer, Cache-Misses und LLM-Aufrufe werden separat gezählt; der Cache enthält keine API-Schlüssel.
 - Optionale Neo4j Graph Data Science (GDS)-Analyse: Community Detection (Leiden oder Louvain), Weakly Connected Components, PageRank und Node Similarity, sofern die jeweilige Prozedur verfügbar ist. Node Similarity erzeugt strukturelle Beziehungskandidaten auf Basis ähnlicher Graphnachbarschaften. Communities, Komponenten und Scores sind erneuerbare Ableitungen; es wird keine zusätzliche persistente Datenbank verwendet. `GDS_MAX_ENTITY_NODES` begrenzt die In-Memory-Projektion.
 - MCP-Tools: `search_knowledge`, `global_search_knowledge`, `get_file_context`, `find_related_files`, `get_graph_stats`, `get_graph_capabilities`, `analyze_knowledge_graph`, `list_graph_assertions`, `get_graph_insights`, `list_graph_link_candidates`, `review_graph_link_candidate`, `get_files_needing_deep_analysis`.
-- Flet-GUI mit Dashboard, Scan-Steuerung, Live-Protokoll, Hybrid Search, Graph-Explorer und Verbindungsprüfung. Im Dashboard lassen sich indexierte Roots nach Sicherheitsabfrage gezielt aus Neo4j entfernen; Quelldateien auf dem Dateisystem werden dabei nicht gelöscht.
+- Flet-Desktop-GUI als Graph Operations Center mit Übersicht, Datenquellen/Indexierung, Graph Explorer, Qualität & Beziehungen, Graph-Analysen und System/MCP. Die GUI enthält bewusst keine inhaltliche Wissenssuche; Fragen an den Graphen werden über die MCP-Tools von externen LLMs gestellt. Unter „Datenquellen“ lassen sich indexierte Roots nach Sicherheitsabfrage gezielt aus Neo4j entfernen; Quelldateien auf dem Dateisystem werden dabei nicht gelöscht.
 - Fehler einer einzelnen Datei brechen den Gesamtimport nicht ab. Wenn der Scan auf nicht lesbare Ordner stößt, wird die Löschbereinigung vorsichtshalber ausgelassen.
 - Ein Scan kann in der GUI angefordert abgebrochen/pausiert werden. Bereits gespeicherte Dateien bleiben erhalten; ein erneuter normaler Scan desselben Roots setzt inkrementell fort.
-- `MAX_CHUNKS_PER_FILE` begrenzt, wie viele Textabschnitte pro Datei im Graph gespeichert und eingebettet werden. Standard: 500. Größere Dateien werden am Ende des Limits abgeschnitten, ohne die Originaldatei zu verändern. Die `KGFile`-Metadaten speichern Gesamtanzahl, indexierte/ausgelassene Chunks, Zeichenanzahl und `needs_deep_analysis=true`. Diese Dateien erscheinen im Dashboard als „Analyse erforderlich“, in Suchtreffern/Graph-Explorer mit Warnhinweis und können per MCP-Tool `get_files_needing_deep_analysis` für eine spätere Vollanalyse gefunden werden. Dateien oberhalb `MAX_FILE_SIZE_MB` werden ebenfalls mit `needs_deep_analysis=true` markiert; ihr Inhalt wird nicht gelesen, sondern nur mit Metadaten gespeichert. Das MCP-Tool listet beide Fälle inklusive Status, Größe und Grund. Sie lassen sich außerdem direkt in Neo4j abfragen:
+- `MAX_CHUNKS_PER_FILE` begrenzt, wie viele Textabschnitte pro Datei im Graph gespeichert und eingebettet werden. Standard: 500. Größere Dateien werden am Ende des Limits abgeschnitten, ohne die Originaldatei zu verändern. Die `KGFile`-Metadaten speichern Gesamtanzahl, indexierte/ausgelassene Chunks, Zeichenanzahl und `needs_deep_analysis=true`. Diese Dateien erscheinen im Dashboard als „Analyse erforderlich“, in MCP-Suchergebnissen und im Graph Explorer mit Warnhinweis und können per MCP-Tool `get_files_needing_deep_analysis` für eine spätere Vollanalyse gefunden werden. Dateien oberhalb `MAX_FILE_SIZE_MB` werden ebenfalls mit `needs_deep_analysis=true` markiert; ihr Inhalt wird nicht gelesen, sondern nur mit Metadaten gespeichert. Das MCP-Tool listet beide Fälle inklusive Status, Größe und Grund. Sie lassen sich außerdem direkt in Neo4j abfragen:
 
 ```cypher
 MATCH (f:KGFile {needs_deep_analysis: true})
@@ -89,11 +91,11 @@ Die GDS-Community-ID ist kein laufbezogener Integer mehr: `KGCommunity.id` wird 
 
 Nur Communities mit mindestens `COMMUNITY_SUMMARY_MIN_MEMBERS` Mitgliedern und mindestens einer aktiven, bestätigten internen Beziehung werden zusammengefasst. Neu berechnet werden höchstens `COMMUNITY_SUMMARY_MAX_PER_RUN` geänderte Communities pro Analyse; mehrere Communities werden in Batches der Größe `COMMUNITY_SUMMARY_BATCH_SIZE` verarbeitet. Unveränderte Eingabefingerprints werden ohne LLM-Aufruf reaktiviert. Nicht mehr aktuelle Communities und Zusammenfassungen werden als stale markiert und von Global Search ausgeschlossen. GDS selbst kann weiterhin sehr kleine Communities erkennen, aber diese werden nicht automatisch zusammengefasst.
 
-In der GUI aktiviert das Kontrollkästchen **Global Search** eine übergreifende Antwort. Sie verbindet bis zu drei passende Community-Zusammenfassungen mit den besten Hybrid-Search-Quellabschnitten. Das Ergebnis nennt die verwendeten Community-Kontexte und zeigt die Originalquellen separat an. Die normale Suche bleibt unverändert und ruft kein zusätzliches Antwort-LLM auf. Der MCP-Modus `global_search_knowledge` stellt die gleiche Funktion für Agenten bereit.
+Die Desktop-GUI bietet bewusst keine Wissenssuche und keine Chat-/RAG-Oberfläche. Inhaltliche Abfragen und die übergreifende Global Search laufen über MCP, insbesondere mit `global_search_knowledge`. Dieses MCP-Tool verbindet passende Community-Zusammenfassungen mit konkreten Hybrid-Search-Quellabschnitten, kennzeichnet offene Punkte und gibt die Originalquellen zurück. Die GUI bleibt auf Aufbau, Struktur, Abdeckung, Qualität und Verwaltung des Graphen fokussiert. Detaillierte Root-Verwaltung findet ausschließlich unter „Datenquellen“ statt; das Dashboard zeigt dafür die Anzahl der registrierten Roots.
 
 `.env`-Einstellungen: `COMMUNITY_SUMMARIES_ENABLED=true`, `COMMUNITY_SUMMARY_MIN_MEMBERS=3`, `COMMUNITY_SUMMARY_MAX_PER_RUN=8`, `COMMUNITY_SUMMARY_BATCH_SIZE=2` und `GLOBAL_SEARCH_ENABLED=true`. Bei Standardwerten erzeugt die Summary-Erstellung höchstens vier LLM-Aufrufe pro Analyse; unveränderte Communities benötigen keinen Aufruf. Das LLM für Global Search wird erst beim ausdrücklichen Aufruf dieser Suchart verwendet. Die Funktion benötigt GDS für neue Community-Erkennung, das vorhandene Chat-LLM für geänderte Zusammenfassungen sowie Antwortgenerierung und die bereits vorhandenen Quell- und Embedding-Suchfunktionen.
 
-Einstellungen in `.env`: `AUTONOMOUS_QUALITY_ENABLED=true`, `QUALITY_MAX_CANDIDATES_PER_RUN=20`, `QUALITY_BATCH_SIZE=5` und `QUALITY_MIN_CONFIDENCE=0.82`. Mit `AUTONOMOUS_QUALITY_ENABLED=false` wird nur die automatische Kandidatenprüfung abgeschaltet; die deterministische Belegprüfung beim optionalen Entity-Extraction-Aufruf bleibt erhalten. Das Review-LLM wird nur aufgerufen, wenn offene, belegbare Kandidaten gefunden werden.
+Einstellungen in `.env`: `AUTONOMOUS_QUALITY_ENABLED=false` (Standard; zum Aktivieren explizit auf `true` setzen), `QUALITY_MAX_CANDIDATES_PER_RUN=20`, `QUALITY_BATCH_SIZE=5` und `QUALITY_MIN_CONFIDENCE=0.82`. Mit `AUTONOMOUS_QUALITY_ENABLED=false` wird nur die automatische Kandidatenprüfung abgeschaltet; die deterministische Belegprüfung beim optionalen Entity-Extraction-Aufruf bleibt erhalten. Das Review-LLM wird nur aufgerufen, wenn offene, belegbare Kandidaten gefunden werden.
 
 ### Automatischer Graph-Cleanup
 
@@ -140,15 +142,17 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 ### Grafische Oberfläche (GUI)
 
-Das Setup installiert auch Flet. Starte die GUI mit Doppelklick auf `run_gui.vbs` (empfohlen) oder `run_gui.bat`. Die GUI startet ohne dauerhaft sichtbares Terminalfenster als Desktop-Anwendung und benötigt keinen Browser. Das rotierende Diagnoseprotokoll liegt unter `logs/winkg-gui.log` (bis zu drei ältere 5-MB-Dateien werden aufbewahrt). Startausgaben und unerwartete Startfehler werden zusätzlich in `logs/winkg-gui-console.log` protokolliert; Hinweise des Launchers stehen in `logs/winkg-gui-startup.log`.
+Das Setup installiert Flet und pywebview. Starte die GUI mit Doppelklick auf `run_gui.vbs` (empfohlen) oder `run_gui.bat`. Die Haupt-GUI startet ohne dauerhaft sichtbares Terminalfenster als Desktop-Anwendung. Die animierte 3D-Graphansicht öffnet sich in einem separaten nativen Fenster über Microsoft Edge WebView2; dafür muss die WebView2 Runtime installiert sein. Das rotierende Diagnoseprotokoll liegt unter `logs/winkg-gui.log` (bis zu drei ältere 5-MB-Dateien werden aufbewahrt). Startausgaben und unerwartete Startfehler werden zusätzlich in `logs/winkg-gui-console.log` protokolliert; Hinweise des Launchers stehen in `logs/winkg-gui-startup.log`.
 
 Die GUI enthält:
 
-- **Dashboard:** Gesamtzahlen des Graphen sowie indexierte Root-Verzeichnisse. Bei jedem Root gibt es **„Aus Index löschen“**. Die App fragt vor der Löschung nach und entfernt nur die Graphdaten dieses Roots aus Neo4j; Quelldateien und Ordner bleiben unangetastet. Während eines laufenden Scans ist die Löschung gesperrt. Der entfernte Root kann später erneut indexiert werden.
-- **Scan & Import:** Ordnerauswahl, inkrementeller Scan, Abbrechen/Pausieren und späteres Fortsetzen, vollständiger Neuaufbau, optionale Embeddings, Entity-Extraktion und Live-Protokoll. Ein Root-Neuaufbau verlangt eine zusätzliche Bestätigung, weil die bisherigen Graphdaten dieses Roots gelöscht werden.
-- **Knowledge Search:** Hybrid-Suche mit Quellenpfad, Textausschnitt, Abschnitt/Seite und optional erkannten Entitäten.
-- **Graph Explorer:** Datei, übergeordneter Ordner, Textabschnitte, extrahierte Entitäten und über gemeinsame Entitäten verbundene Dateien erkunden.
-- **Verbindung:** Neo4j- und Embedding-Test sowie Anzeige relevanter `.env`-Konfiguration ohne Passwortanzeige.
+- **Übersicht:** Kompakte Kennzahlen zu Dateien, Textabschnitten, Entitäten und registrierten Roots, dazu Datenqualitätsindikatoren und einklappbare erweiterte Graph-Statistiken. Detailverwaltung und Löschung einzelner Roots befinden sich ausschließlich unter **Datenquellen**. Die App fragt vor der Löschung nach und entfernt nur die Graphdaten dieses Roots aus Neo4j; Quelldateien und Ordner bleiben unangetastet.
+- **Datenquellen & Indexierung:** Ordnerauswahl, inkrementeller Scan, Abbrechen/Pausieren und späteres Fortsetzen, vollständiger Neuaufbau, optionale Embeddings, Entity-Extraktion und Live-Protokoll. Ein Root-Neuaufbau verlangt eine zusätzliche Bestätigung, weil die bisherigen Graphdaten dieses Roots gelöscht werden.
+- **Graph Explorer:** Die native animierte 3D-Galaxie zeigt den vollständigen Neo4j-Datenbestand mit allen Knoten und Beziehungen. Die frühere Knotensuche wurde entfernt; Typfilter blenden Kategorien visuell ein oder aus, ohne den geladenen Gesamtbestand aus der Szene zu entfernen. Es gibt standardmäßig keine Knotenauswahl. Beim Auswählen zeigt der Inspektor Metadaten und direkte Beziehungen; „Im Graph zentrieren“, „Umfeld hervorheben“ und „Auswahl aufheben“ unterstützen das Erkunden. In der Hervorhebung werden Labels des ausgewählten Knotens und seiner direkten Nachbarn gezeigt.
+- **Qualität & Beziehungen:** Beziehungsvorschläge anhand von Verfahren, Begründung und Quellbelegen prüfen; akzeptierte, abgelehnte oder zurückgestellte Entscheidungen werden in Neo4j gespeichert.
+- **Graph-Analysen:** Analyseübersichten und wesentliche Befunde verständlich darstellen; technische JSON-Ausgaben bleiben als Diagnosebereich aufklappbar. Optionale GDS-Algorithmen sind separat zuschaltbar.
+- **System & MCP:** Neo4j-/Embedding-Test sowie Anzeige relevanter `.env`-Konfiguration ohne Passwortanzeige. Die Oberfläche zeigt die MCP-Betriebsweise an, behauptet aber keine aktive Verbindung zu einem externen MCP-Client.
+- **Navigation & Scan-Optionen:** Icon-basierte Navigation mit hervorgehobener aktiver Seite; erweiterte Scanoptionen und destruktiver Neuaufbau sind standardmäßig eingeklappt.
 
 Der Ordnerdialog greift auf das Dateisystem des Rechners zu, auf dem die GUI ausgeführt wird. Die Anwendung sollte daher lokal auf dem Windows-Rechner gestartet werden, dessen Dateien indexiert werden sollen.
 
@@ -280,11 +284,16 @@ Der Server verwendet **stdio** (kein offener Netzwerk-Port). Der MCP-Client muss
 
 Folgende Tools werden registriert:
 
-- `search_knowledge(query, limit, root?)`
-- `get_file_context(path, root?)`
-- `find_related_files(path, limit, root?)`
-- `get_graph_stats(root?)`
-- `get_files_needing_deep_analysis(limit, root?)`
+- `search_knowledge(query, limit, root?)` – hybride Quellensuche
+- `global_search_knowledge(query, limit, root?)` – globale Suche über konkrete Treffer und Community-Zusammenfassungen
+- `get_file_context(path, root?)` – Dateimetadaten und gespeicherte Textabschnitte
+- `find_related_files(path, limit, root?)` – strukturell bzw. semantisch verbundene Dateien
+- `get_graph_stats(root?)` und `get_graph_capabilities()` – Bestand und tatsächlich verfügbare Neo4j-/GDS-Funktionen
+- `analyze_knowledge_graph(...)` – Graphanalyse mit optionalem GDS
+- `list_graph_link_candidates(status?, limit, include_stale?)` und `review_graph_link_candidate(candidate_id, decision, note?)` – Kandidaten prüfen und entscheiden
+- `list_graph_assertions(status?, predicate?, ...)` – quellengebundene Aussagen auflisten
+- `get_graph_insights(limit, run_id?)` – gespeicherte Analysebefunde und Community-Insights
+- `get_files_needing_deep_analysis(limit, root?)` – Dateien mit ausgelassenem bzw. begrenztem Inhalt
 
 Der MCP-Server lädt seine Einstellungen ausschließlich aus der `.env` im Projektordner. Stelle sicher, dass der Server mit der Python-Umgebung dieses Projekts gestartet wird; Windows-Umgebungsvariablen sollen die projektlokale Konfiguration nicht ersetzen.
 
@@ -355,3 +364,32 @@ Die verwendeten Labels und Beziehungstypen sind bewusst mit `KG` präfixiert, da
 ```
 
 Die Tests decken Chunking, Inhaltsextraktion, Graph-Cleanup, Quellbeleg-Validierung, adaptive Schwellen und die Batch-Steuerung des autonomen Qualitätszyklus ab. Die Testsuite führt keine echten Neo4j-/LLM-Integrationstests aus; diese benötigen laufende Dienste und müssen separat ausgeführt werden.
+
+## Desktop-GUI (Version 1.0.0)
+
+Die 3D-Szene wird lokal mit WebGL gerendert und benötigt weder einen CDN-Zugriff noch zusätzliche LLM-Aufrufe. Unter Windows verwendet das separate Graphfenster pywebview mit der Microsoft Edge WebView2 Runtime, da Flets eingebautes WebView Windows nicht unterstützt.
+
+Die Desktop-GUI ist als **Graph Operations Center** ausgerichtet. Sie ist bewusst keine Chat- oder Wissenssuche-Oberfläche: Inhaltliche Fragen stellt man externen LLMs über die MCP-Werkzeuge. Die GUI konzentriert sich auf Graph-Aufbau, Indexierung, strukturelle Inspektion, Datenqualität und Analyse.
+
+### UI-Bereiche
+
+- **Übersicht:** kompakte Kennzahlen, Datenqualitätsindikatoren und aufklappbare erweiterte Graph-Statistiken. Doppelte Navigationskarten und die Root-Registry wurden entfernt; Funktionen bleiben über die feste Seitenleiste und den Bereich „Datenquellen“ erreichbar.
+- **Datenquellen:** inkrementelle Indexierung und Live-Protokoll in einem Arbeitsbereich; fortgeschrittene Optionen und destruktiver Neuaufbau sind getrennt.
+- **Graph Explorer:** animierte, echte 3D-Graphansicht in einem nativen WebView2-Fenster. Beim Öffnen lädt sie alle Knoten und alle Beziehungen der konfigurierten Neo4j-Datenbank als vollständige Galaxie, nicht nur die Nachbarschaft einer ausgewählten Datei. Die frühere Knotensuche wurde entfernt; Typfilter blenden Kategorien visuell ein oder aus. Mausziehen dreht die Kamera, Rechtsziehen verschiebt, Mausrad zoomt; Knoten zeigen ihre Labels und direkten Beziehungen. „Umfeld hervorheben“ fokussiert visuell auf Nachbarn, ohne neue Datenbankabfragen auszuführen.
+- **Qualität & Beziehungen:** Beziehungskandidaten als strukturierte Richtungskarten mit Methode, Score, Evidenzanzahl, historischer Annahmequote und expliziten Review-Aktionen.
+- **Graph-Analysen:** lesbare Statusmetriken und Befunde; vollständige JSON-Ausgabe bleibt nur als technische Detailansicht verfügbar.
+- **System & MCP:** Verbindungsprüfung, Konfigurationswerte und klare Abgrenzung des stdio-MCP-Zugriffs für externe Clients.
+
+Das Design nutzt ein einheitliches dunkles Farbsystem, wiederverwendbare Oberflächenkomponenten, semantische Statusfarben und eine feste Desktop-Navigation. Die fachliche Wahrheit bleibt in Neo4j und den zugehörigen Quellenbelegen; räumliche Positionen und Animationen der Visualisierung sind reine Anzeigeelemente.
+
+Die 3D-Galaxie verwendet einen lokalen WebGL-Renderer mit 3D-Kamera, animierter Kraftsimulation, Sternenhintergrund und bewegten Partikeln entlang der Kanten. Beim Öffnen lädt der Viewer über `Neo4jStore.graph_snapshot()` sämtliche Knoten und Beziehungen ohne Root- oder Nachbarschaftsbegrenzung. Übertragen werden nur leichte Anzeige-Metadaten, keine Chunktexte und keine Embedding-Vektoren. Der Renderer nutzt eine räumliche Hash-Zelle für lokale Abstoßung, eine Adjazenzliste für Kantenkräfte und begrenzt HTML-Labels auf die wichtigsten Knoten, damit die komplette Galaxie performant bleibt. Die Ansicht läuft in einem separaten nativen pywebview-/WebView2-Fenster und enthält keine CDN-Abhängigkeiten. Die Positionen der Knoten werden lokal berechnet und nicht nach Neo4j zurückgeschrieben.
+
+### Interaktion mit der 3D-Galaxie
+
+Beim Öffnen ist kein Knoten ausgewählt. Klicke einen Knoten an, um Metadaten und direkte Beziehungen im Inspektor zu sehen. Die Kamera lässt sich durch Ziehen drehen, mit der rechten Maustaste verschieben und über das Mausrad zoomen. **„Im Graph zentrieren“** fokussiert den ausgewählten Knoten; **„Umfeld hervorheben“** schaltet die visuelle Hervorhebung seiner direkten Nachbarn um. In diesem Modus werden Labels für den ausgewählten Knoten und seine direkten Nachbarn gezeigt. Über **„Auswahl aufheben“** oder einen Klick auf die leere Szene lässt sich die Auswahl wieder entfernen, ohne die Gesamtsicht auf den Datenbestand zu verlieren. Die Typfilter steuern die Sichtbarkeit nach Knotentypen, ohne den vollständigen Bestand aus der geladenen Szene zu löschen.
+
+### Übersicht und Seitenlayout
+
+Die Übersicht bündelt Kernkennzahlen, Datenqualitätsindikatoren und Betriebsstatus. Der Schalter **„Erweiterte Statistik anzeigen“** befindet sich oben in der Zeile **GRAPH AT A GLANCE** und blendet zusätzliche Kennzahlen zu Ordnern, belegten Aussagen, Communities, Komponenten, Analysebefunden und GDS-Ähnlichkeitskanten ein. Die Übersicht erzeugt keine zusätzliche eigenständige Scrollfläche. Längere Arbeitsbereiche, insbesondere **Datenquellen**, verwalten ihren eigenen Scrollbereich; die beiden oberen Karten **„Datenquelle konfigurieren“** und **„Laufaktivität“** haben eine gleiche, begrenzte Höhe.
+
+Das Release 1.0.0 konsolidiert das Desktop-Layout und die Seitennavigation. Wiederholte Navigations- und Statuskarten wurden entfernt, Root-Verwaltung ist unter **„Datenquellen“** gebündelt, und die Anwendung verwendet einen gemeinsamen App-Header statt wiederholter Titelbanner.

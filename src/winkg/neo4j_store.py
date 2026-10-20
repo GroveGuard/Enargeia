@@ -1318,6 +1318,31 @@ class Neo4jStore:
             "ORDER BY toLower(r.name), r.path"
         )
 
+    def graph_snapshot(self) -> dict[str, list[dict[str, Any]]]:
+        """Return every node and relationship for the whole Neo4j database.
+
+        Only lightweight display metadata is selected; document/chunk bodies and
+        embedding vectors are intentionally not transferred to the visualizer.
+        The snapshot is read-only and is not restricted to a selected source root.
+        """
+        nodes = self._run(
+            "MATCH (n) "
+            "RETURN elementId(n) AS id, labels(n) AS labels, "
+            "coalesce(toString(n.name), toString(n.title), toString(n.path), "
+            "toString(n.relative_path), toString(n.filename), toString(n.section), "
+            "toString(n.predicate), toString(n.type), toString(n.canonical_name), "
+            "toString(n.summary), toString(n.id), labels(n)[0], 'Knoten') AS label, "
+            "coalesce(toString(n.path), toString(n.relative_path), "
+            "toString(n.filename), toString(n.source_path), '') AS path, "
+            "coalesce(toString(n.description), toString(n.summary), "
+            "toString(n.section), toString(n.predicate), toString(n.type), '') AS detail"
+        )
+        relationships = self._run(
+            "MATCH (a)-[r]->(b) "
+            "RETURN elementId(a) AS source, elementId(b) AS target, type(r) AS type"
+        )
+        return {"nodes": nodes, "relationships": relationships}
+
     def graph_neighborhood(self, query: str, root_id: str | None = None,
                            limit: int = 12) -> dict[str, Any] | None:
         """Resolve a file and return a small, source-grounded graph neighborhood.
