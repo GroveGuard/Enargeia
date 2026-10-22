@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 
 def main() -> int:
@@ -12,6 +13,7 @@ def main() -> int:
         import flet_desktop
         import onnxruntime
         import fastembed
+        import pymupdf
         from fastembed import TextEmbedding
 
         expected = "1.23.0"
@@ -28,6 +30,12 @@ def main() -> int:
         if "CPUExecutionProvider" not in providers:
             raise RuntimeError(f"ONNX Runtime CPU provider is unavailable: {providers}")
         _ = TextEmbedding
+        layout_data = (
+            Path(pymupdf.__file__).resolve().parent
+            / "layout" / "resources" / "onnx" / "layout_rf2.4.1+imf1.yaml"
+        )
+        if not layout_data.is_file():
+            raise RuntimeError(f"PyMuPDF layout data is missing: {layout_data}")
         flet_version = version("flet")
         if flet_version != "1.0.5":
             raise RuntimeError(
@@ -50,6 +58,7 @@ def main() -> int:
         print(f"FastEmbed: {fastembed_version} ({fastembed.__file__})")
         print(f"ONNX Runtime: {onnxruntime.__version__}")
         print(f"Execution providers: {', '.join(providers)}")
+        print(f"PyMuPDF layout data: {layout_data}")
         return 0
     except Exception as exc:
         print(f"Build runtime dependency preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr)

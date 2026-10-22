@@ -8,6 +8,7 @@ and Neo4j layers.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -273,7 +274,12 @@ def main() -> int:
         api = GraphWindowApi(payload_path)
         webview.create_window(
             "Enargeia · 3D Explorer",
-            html=HTML_PATH.read_text(encoding="utf-8"),
+            html=HTML_PATH.read_text(encoding="utf-8").replace(
+                'src="assets/Enargeia_Symbol_512.png"',
+                'src="data:image/png;base64,' + base64.b64encode(
+                    (HTML_PATH.parent / "assets" / "Enargeia_Symbol_512.png").read_bytes()
+                ).decode("ascii") + '"',
+            ),
             js_api=api,
             width=1600,
             height=980,

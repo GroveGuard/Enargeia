@@ -43,7 +43,7 @@
   <aside class="inspector">
    <div class="inspect-head"><div class="inspect-overline">Ausgewählter Knoten</div><div class="nodeheading"><div class="nodeglyph" id="nodeGlyph">✣</div><div style="min-width:0;flex:1"><div class="node-title" id="nodeTitle">Graph wird geladen …</div><span class="typebadge" id="nodeType">Knowledge Graph</span></div></div></div>
    <div class="inspect-body" id="inspectBody"><div class="empty-inspector">Wähle einen Knoten in der 3D-Ansicht, um Eigenschaften, Quellen und Verknüpfungen zu sehen.</div></div>
-   <div class="inspect-actions"><button class="primary" id="btnFocus">◎ Im Graph zentrieren</button><button id="btnExpand">✧ Umfeld hervorheben</button><button id="btnDetails">▣ Im Windows-Explorer öffnen</button><button class="secondary" id="btnClearSelection" disabled>Auswahl aufheben</button></div>
+   <div class="inspect-actions"><button class="primary" id="btnFocus">◎ Im Graph zentrieren</button><button id="btnExpand">✧ Umfeld hervorheben</button><button id="btnDetails">▣ Im Windows-Explorer öffnen</button></div>
   </aside>
  </div>
 </div>
@@ -152,7 +152,7 @@
  }
  function safeText(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
  function updateInspector(){
-   const n=selected;if(!n){$('nodeTitle').textContent='Gesamte Galaxie';$('nodeType').textContent='Keine Knotenauswahl';$('nodeGlyph').textContent='✣';$('inspectBody').innerHTML='<div class="empty-inspector">Die vollständige Datenbank ist sichtbar. Klicke einen Knoten an, um Details zu sehen, oder erkunde die Galaxie ohne Auswahl.</div>';$('btnExpand').disabled=true;$('btnFocus').disabled=true;$('btnDetails').disabled=true;$('btnClearSelection').disabled=true;$('btnClearSelection').textContent='Keine Auswahl';return;}
+   const n=selected;if(!n){$('nodeTitle').textContent='Gesamte Galaxie';$('nodeType').textContent='Keine Knotenauswahl';$('nodeGlyph').textContent='✣';$('inspectBody').innerHTML='<div class="empty-inspector">Die vollständige Datenbank ist sichtbar. Klicke einen Knoten an, um Details zu sehen, oder erkunde die Galaxie ohne Auswahl.</div>';$('btnExpand').disabled=true;$('btnFocus').disabled=true;$('btnDetails').disabled=true;return;}
    const meta=TYPE[n.kind]||TYPE.related;$('nodeGlyph').textContent=meta.glyph;$('nodeGlyph').style.color=meta.color;$('nodeGlyph').style.borderColor=meta.color+'88';$('nodeGlyph').style.background=meta.color+'18';$('nodeTitle').textContent=n.label;$('nodeType').textContent=meta.label;$('nodeType').style.borderColor=meta.color+'66';
    const shared=(n.detail||'').match(/Gemeinsame Entitäten:\s*(.*)/i)?.[1];
    let html='';
@@ -162,7 +162,7 @@
    const neighbours=(adjacency.get(n.id)||[]).map(l=>{const other=byId.get(l.source===n.id?l.target:l.source);return other?{node:other,type:l.kind,relationType:l.relationType}:null}).filter(Boolean).sort((a,b)=>(b.node.degree||0)-(a.node.degree||0)).slice(0,10);
    if(neighbours.length){html+='<div class="divider"></div><div class="fieldlabel" style="margin-bottom:8px">Direkte Beziehungen</div><div class="relations">';neighbours.forEach(item=>{const col=EDGE[item.type]||'#91A9C8';html+=`<div class="relation"><span style="color:${col}">●</span><span class="rtype">${safeText(item.relationType)}</span><span class="count">${safeText(item.node.label.slice(0,27))}</span></div>`});html+='</div>';}
    if(shared)html+=`<div class="divider"></div><div class="fieldlabel">Gemeinsame Entitäten</div><div class="taglist"><span class="tag">${safeText(shared)}</span></div>`;
-   $('inspectBody').innerHTML=html;$('btnExpand').disabled=!n.id;$('btnExpand').textContent=showNeighborhood?'◎ Gesamte Galaxie anzeigen':'✧ Umfeld hervorheben';$('btnFocus').disabled=false;$('btnDetails').disabled=!n.path;$('btnClearSelection').disabled=false;$('btnClearSelection').textContent='Auswahl aufheben';
+   $('inspectBody').innerHTML=html;$('btnExpand').disabled=!n.id;$('btnExpand').textContent=showNeighborhood?'◎ Gesamte Galaxie anzeigen':'✧ Umfeld hervorheben';$('btnFocus').disabled=false;$('btnDetails').disabled=!n.path;
  }
  function showToast(text){const t=$('toast');t.textContent=text;t.classList.add('show');clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>t.classList.remove('show'),2200);}
  function rotatePoint(p){const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);const x=cy*p.x+sy*p.z,z1=-sy*p.x+cy*p.z;return{x,y:cp*p.y-sp*z1,z:sp*p.y+cp*z1};}
@@ -241,7 +241,7 @@
  function applyFilters(){document.querySelectorAll('.filter').forEach(b=>{const k=b.dataset.kind;b.classList.toggle('active',k==='all'?enabledKinds.size===Object.keys(TYPE).length:enabledKinds.has(k));});}
  document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.kind;if(k==='all'){enabledKinds=new Set(Object.keys(TYPE));}else{if(enabledKinds.has(k))enabledKinds.delete(k);else enabledKinds.add(k);}applyFilters();}));
  $('btnPause').addEventListener('click',()=>{paused=!paused;$('btnPause').textContent=paused?'▶':'Ⅱ';$('btnPause').title=paused?'Animation fortsetzen':'Animation pausieren';});
- $('btnFit').addEventListener('click',()=>{fitCamera();});$('btnReset').addEventListener('click',()=>{fitCamera();yaw=-.26;pitch=.18;});$('btnZoomIn').addEventListener('click',()=>cameraDistance=Math.max(180,cameraDistance*.82));$('btnZoomOut').addEventListener('click',()=>cameraDistance=Math.min(10000,cameraDistance*1.2));$('btnFocus').addEventListener('click',()=>focusNode(selected));$('btnClearSelection').addEventListener('click',clearSelection);
+ $('btnFit').addEventListener('click',()=>{fitCamera();});$('btnReset').addEventListener('click',()=>{fitCamera();yaw=-.26;pitch=.18;});$('btnZoomIn').addEventListener('click',()=>cameraDistance=Math.max(180,cameraDistance*.82));$('btnZoomOut').addEventListener('click',()=>cameraDistance=Math.min(10000,cameraDistance*1.2));$('btnFocus').addEventListener('click',()=>focusNode(selected));
  $('btnExpand').addEventListener('click',()=>{if(!selected)return;showNeighborhood=!showNeighborhood;if(showNeighborhood){neighborhoodIds=new Set([selected.id]);for(const l of adjacency.get(selected.id)||[]){neighborhoodIds.add(l.source);neighborhoodIds.add(l.target);}}else{neighborhoodIds.clear();}buildLabels();updateInspector();showToast(showNeighborhood?'Umfeld hervorgehoben; nur Labels der hervorgehobenen Knoten werden gezeigt.':'Gesamter Datenbestand sichtbar.');});
  $('btnDetails').addEventListener('click',async()=>{if(!selected?.path||!window.pywebview?.api)return;try{const r=await window.pywebview.api.open_in_explorer(selected.path);showToast(r?.ok?'Originalpfad im Explorer geöffnet.':(r?.error||'Explorer konnte nicht geöffnet werden.'));}catch(e){showToast('Explorer konnte nicht geöffnet werden: '+e);}});
  $('btnRefresh').addEventListener('click',async()=>{if(!window.pywebview?.api)return;try{const r=await window.pywebview.api.refresh_graph();if(r?.ok)showToast('Graphdaten werden aktualisiert …');else showToast(r?.error||'Aktualisierung fehlgeschlagen');}catch(e){showToast(String(e));}});

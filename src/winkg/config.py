@@ -110,6 +110,7 @@ class Settings:
     gds_max_knn_chunks: int = 10000
     log_level: str = "INFO"
     include_sensitive_files: bool = False
+    include_ignored_dirs: bool = False
     use_docling: bool = False
     extra_excluded_dirs: tuple[str, ...] = ()
 
@@ -211,6 +212,7 @@ def get_settings() -> Settings:
         gds_max_knn_chunks=_int(values, "GDS_MAX_KNN_CHUNKS", 10000, 100),
         log_level=_get(values, "LOG_LEVEL", "INFO").upper(),
         include_sensitive_files=_bool(values, "INCLUDE_SENSITIVE_FILES", False),
+        include_ignored_dirs=_bool(values, "INCLUDE_IGNORED_DIRS", False),
         use_docling=_bool(values, "USE_DOCLING", False),
         extra_excluded_dirs=tuple(
             item.strip().casefold()

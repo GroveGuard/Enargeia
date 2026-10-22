@@ -44,7 +44,7 @@ $GuiArgs = $Common + @(
   '--collect-all','flet','--collect-all','flet_desktop',
   '--hidden-import','flet_desktop','--copy-metadata','flet','--copy-metadata','flet-desktop',
   '--collect-all','fastembed','--collect-binaries','onnxruntime','--collect-data','onnxruntime',
-  '--collect-all','huggingface_hub','--collect-all','tokenizers','--collect-all','tqdm',
+  '--collect-all','huggingface_hub','--collect-all','tokenizers','--collect-all','tqdm','--collect-all','pymupdf',
   '--hidden-import','fastembed','--hidden-import','fastembed.text.text_embedding',
   '--hidden-import','onnxruntime','--hidden-import','onnxruntime.capi',
   '--hidden-import','onnxruntime.capi.onnxruntime_pybind11_state',
@@ -90,6 +90,17 @@ if (-not $OnnxCapi) {
   throw "Generated GUI bundle is missing required ONNX native files. Checked $CandidateSummary. Missing in a single capi directory: $($MissingOnnxFiles -join ', '). Files found anywhere in bundle: $FoundSummary. Installer will not be created."
 }
 Write-Host "ONNX native files verified in: $OnnxCapi" -ForegroundColor Green
+
+# PyMuPDF's layout-aware PDF extraction reads versioned ONNX model YAML files
+# at runtime. PyInstaller's import analysis alone does not collect this data.
+$PyMuPDFLayoutData = @(
+  Get-ChildItem -Path $AppBundle -File -Filter 'layout_rf2.4.1+imf1.yaml' -Recurse -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty FullName
+)
+if ($PyMuPDFLayoutData.Count -eq 0) {
+  throw 'Generated GUI bundle is missing PyMuPDF layout data (layout_rf2.4.1+imf1.yaml). Installer will not be created.'
+}
+Write-Host "PyMuPDF layout data verified in: $($PyMuPDFLayoutData[0])" -ForegroundColor Green
 
 $GraphArgs = $Common + @(
   '--windowed','--name','Enargeia3D',

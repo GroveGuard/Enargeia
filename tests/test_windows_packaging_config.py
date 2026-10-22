@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_local_embedding_runtime_is_pinned_as_a_compatible_pair():
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "1.2.0"' in project
+    assert 'version = "1.2.1"' in project
     assert '"fastembed==0.9.0"' in project
     assert '"onnxruntime==1.23.0"' in project
     assert '"huggingface-hub==0.36.2"' in project
@@ -31,7 +32,7 @@ def test_windows_build_uses_isolated_environment_and_checks_native_onnx_files():
 def test_inno_setup_uses_enargeia_identity_and_integrated_brand_assets():
     installer = (ROOT / "packaging/windows/Enargeia.iss").read_text(encoding="utf-8")
     assert '#define MyAppName "Enargeia"' in installer
-    assert '#define MyAppVersion "1.2.0"' in installer
+    assert '#define MyAppVersion "1.2.1"' in installer
     assert "DefaultDirName={localappdata}\\Programs\\Enargeia" in installer
     assert "OutputBaseFilename=Enargeia-Setup-{#MyAppVersion}-x64" in installer
     assert "SetupIconFile={#BrandRoot}\\icons\\Enargeia.ico" in installer
@@ -75,6 +76,11 @@ def test_windows_build_preflight_checks_pinned_runtime_dependencies():
     assert 'fastembed_version != "0.9.0"' in helper
     assert 'expected = "1.23.0"' in helper
     assert 'hub_version != "0.36.2"' in helper
+
+
+def test_windows_build_preflight_is_valid_python():
+    helper = (ROOT / "packaging/windows/check_embedding_build.py").read_text(encoding="utf-8")
+    ast.parse(helper)
 
 
 def test_desktop_runtime_is_declared_and_packaged():

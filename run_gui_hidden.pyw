@@ -25,6 +25,9 @@ def main() -> int:
     command = [str(python_exe), "-m", "winkg.bootstrap"]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    source_path = str(project_root / "src")
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = source_path + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
     return subprocess.call(command, cwd=str(project_root), env=env,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 

@@ -9,6 +9,7 @@ import queue
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from logging.handlers import RotatingFileHandler
 import threading
@@ -18,7 +19,7 @@ from typing import Any, Callable
 import flet as ft
 
 from . import __version__
-from .branding import image_as_base64
+from .branding import image_as_base64, brand_asset_path
 from .config import IS_FROZEN, LOG_DIR, PROJECT_ROOT, get_settings
 from .embeddings import EmbeddingClient
 from .graph_intelligence import GraphIntelligence
@@ -198,6 +199,96 @@ def _run_doctor(
     return result
 
 
+def _run_llm_test() -> dict[str, Any]:
+    """Verify chat access and the structured JSON output required by graph extraction."""
+    import requests
+
+    settings = get_settings()
+    if settings.llm_provider == "none":
+        return {"status": "DEAKTIVIERT", "model": "none", "message": "Es ist kein Chat-LLM konfiguriert."}
+    if not settings.llm_enabled:
+        raise ValueError("LLM ist deaktiviert oder Basis-URL/Modell fehlen.")
+    endpoint = settings.llm_base_url.rstrip("/")
+    if not endpoint.endswith("/chat/completions"):
+        endpoint += "/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if settings.llm_api_key:
+        headers["Authorization"] = f"Bearer {settings.llm_api_key}"
+    started = time.monotonic()
+    response = requests.post(
+        endpoint,
+        headers=headers,
+        json={
+            "model": settings.llm_model,
+            "response_format": {"type": "json_object"},
+            "temperature": 0,
+            "max_tokens": 256,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Antworte ausschließlich mit genau einem gültigen JSON-Objekt, "
+                        "ohne Analyse, Markdown oder zusätzlichen Text. Das Objekt muss "
+                        'die Felder "entities" und "relations" enthalten, beide als Arrays.'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        'Extrahiere Entitäten und Beziehungen aus "Acme nutzt SAP". '
+                        'Gib das Format {"entities":[],"relations":[]} zurück.'
+                    ),
+                },
+            ],
+        },
+        timeout=settings.llm_timeout_seconds,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    choices = payload.get("choices")
+    if not choices:
+        raise ValueError("Der LLM-Endpunkt lieferte keine Chat-Antwort.")
+    message = (choices[0].get("message") or {}) if isinstance(choices[0], dict) else {}
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Der LLM-Endpunkt antwortet, lieferte aber keinen JSON-Text.")
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError as exc:
+        excerpt = content[:240].replace("\n", " ")
+        raise ValueError(
+            "Der LLM-Endpunkt ist erreichbar, liefert aber kein gültiges JSON für die "
+            f"Knowledge-Graph-Extraktion. JSON-Fehler: {exc}. Antwortanfang: {excerpt!r}"
+        ) from exc
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("entities"), list)
+        or not isinstance(result.get("relations"), list)
+    ):
+        raise ValueError(
+            "Der LLM-Endpunkt ist erreichbar, aber die JSON-Antwort enthält nicht die "
+            "erforderlichen Arrays 'entities' und 'relations'."
+        )
+    return {
+        "status": "OK",
+        "model": settings.llm_model,
+        "output_format": "json_object",
+        "latency_seconds": round(time.monotonic() - started, 2),
+    }
+
+
+def _run_embedding_test(
+    embedding_progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Test vector generation independently of the Neo4j connection."""
+    settings = get_settings()
+    if settings.embedding_provider == "none":
+        return {"status": "DEAKTIVIERT", "model": "none"}
+    client = EmbeddingClient(settings, progress_callback=embedding_progress_callback)
+    vector = client.embed_one("Enargeia Embedding-Verbindungstest")
+    return {"status": "OK", "model": client.signature, "dimensions": len(vector)}
+
+
 def _run_graph_query(query: str, root_path: str) -> dict[str, Any] | None:
     settings = get_settings()
     settings.validate_neo4j()
@@ -254,6 +345,10 @@ def _run_review_graph_link_candidate(candidate_id: str, decision: str, note: str
 def main(page: ft.Page) -> None:
     _configure_logging()
     page.title = APP_NAME
+    try:
+        page.window.icon = str(brand_asset_path("Enargeia.ico"))
+    except Exception:
+        pass
     page.theme_mode = ft.ThemeMode.DARK
     page.theme = ft.Theme(color_scheme_seed=ACCENT)
     page.bgcolor = BG
@@ -324,11 +419,7 @@ def main(page: ft.Page) -> None:
         expand=True,
         on_submit=lambda e: page.run_task(graph_task),
     )
-    force_checkbox = ft.Checkbox(label="Alle Dateien erneut verarbeiten", value=False)
-    extract_entities_checkbox = ft.Checkbox(label="Entitäten und Beziehungen per Chat-LLM extrahieren", value=False)
-    no_embeddings_checkbox = ft.Checkbox(label="Ohne Embeddings (nur Graph/Volltext)", value=False)
-    include_ignored_checkbox = ft.Checkbox(label="Standardmäßig ausgeschlossene Ordner einbeziehen", value=False)
-    include_sensitive_checkbox = ft.Checkbox(label="Sensible Dateien ausdrücklich einschließen", value=False)
+    force_checkbox = ft.Checkbox(label="Alle Daten erneut verarbeiten", value=False)
     rebuild_confirm_checkbox = ft.Checkbox(label="Ich bestätige, dass der Graph dieses Roots gelöscht und neu aufgebaut wird.", value=False)
 
     scan_status = ft.Text("Bereit für den Scan.", size=12, color=MUTED)
@@ -351,8 +442,7 @@ def main(page: ft.Page) -> None:
     graph_status = ft.Text("Suche nach Dateien und gespeicherten Graph-Beziehungen.", size=12, color=MUTED)
     galaxy_status = ft.Text("Bereit · vollständige Neo4j-Datenbank wird beim Öffnen geladen.", size=11, color=MUTED)
     graph_results = ft.Column(spacing=12, controls=[ft.Container(content=ft.Text("Wähle eine Datei oder einen Pfad, um die gespeicherten Graph-Beziehungen zu untersuchen.", size=12, color=MUTED), padding=18, bgcolor=PANEL, border=ft.Border.all(1, BORDER), border_radius=10)], expand=False)
-    connection_status = ft.Text("Noch nicht geprüft", size=13, color=MUTED)
-    connection_details = ft.Column(spacing=7, controls=[ft.Container(content=ft.Text("Starte den Systemtest, um Verbindungsdetails und Laufzeitdiagnose zu laden.", size=11, color=MUTED), padding=12, bgcolor=PANEL_ALT, border_radius=8)], expand=False)
+    connection_status = ft.Text("Noch nicht geprüft", size=11, color=MUTED)
     connection_embedding_progress_text = ft.Text("Modell-Download wartet auf den ersten lokalen Embedding-Aufruf.", size=10, color=MUTED, selectable=True)
     connection_embedding_progress_bar = ft.ProgressBar(value=None, visible=True, color=ACCENT, bgcolor=BORDER, bar_height=6)
     connection_embedding_progress_panel = ft.Container(
@@ -368,6 +458,7 @@ def main(page: ft.Page) -> None:
     quality_status = ft.Text("Beziehungsvorschläge warten auf Prüfung.", size=12, color=MUTED)
     quality_output = ft.Column(spacing=9, controls=[ft.Container(content=ft.Text("Beziehungsvorschläge werden hier nach dem Laden angezeigt.", size=12, color=MUTED), padding=16, bgcolor=PANEL_ALT, border_radius=8)], expand=False)
     gds_analysis_checkbox = ft.Checkbox(label="GDS-Algorithmen zusätzlich ausführen (sofern installiert)", value=True)
+    last_analysis_report: dict[str, Any] | None = None
 
     # ---------------- Utility rendering ----------------
     def _format_embedding_progress(event: dict[str, Any]) -> tuple[str, float | None, bool]:
@@ -757,14 +848,11 @@ def main(page: ft.Page) -> None:
                 ft.Row(
                     controls=[
                         ft.Text("GRAPH AT A GLANCE", size=10, weight=ft.FontWeight.BOLD, color=SUBTLE),
-                        ft.Container(expand=True),
-                        graph_stats_toggle,
-                        _status_pill("Live-Werte aus Neo4j", ACCENT),
                     ],
-                    spacing=10,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 primary_stats,
+                ft.Row(controls=[graph_stats_toggle]),
                 graph_stats,
                 operation_status,
                 coverage_panel,
@@ -858,10 +946,10 @@ def main(page: ft.Page) -> None:
                     root_path,
                     force=bool(force_checkbox.value) and not rebuild,
                     rebuild=rebuild,
-                    no_embeddings=bool(no_embeddings_checkbox.value),
-                    extract_entities=bool(extract_entities_checkbox.value),
-                    include_ignored=bool(include_ignored_checkbox.value),
-                    include_sensitive=bool(include_sensitive_checkbox.value),
+                    no_embeddings=settings.embedding_provider == "none",
+                    extract_entities=settings.entity_extraction_enabled,
+                    include_ignored=settings.include_ignored_dirs,
+                    include_sensitive=settings.include_sensitive_files,
                     cancel_event=cancel_event,
                 )
                 scan_state["result"] = result
@@ -952,16 +1040,9 @@ def main(page: ft.Page) -> None:
                             ft.Row(controls=[scan_start_button, scan_cancel_button, scan_progress], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True),
                         ], spacing=8), padding=14, bgcolor=PANEL_ALT, border_radius=12,
                     ),
-                    ft.Row(controls=[ft.Icon(_safe_icon("SHIELD_OUTLINED"), color=GOOD, size=16), ft.Text("Quelldateien werden nicht verändert.", size=10, color=GOOD)], spacing=8),
                     scan_status,
                     scan_embedding_progress_panel,
-                    ft.ExpansionTile(
-                        title=ft.Text("Verarbeitungsoptionen", color=TEXT, size=12, weight=ft.FontWeight.W_600),
-                        subtitle=ft.Text("Embeddings, LLM-Extraktion, erneute Verarbeitung und Ausschlüsse", color=MUTED, size=10),
-                        expanded=False,
-                        controls=[ft.Container(content=ft.Column(controls=[force_checkbox, no_embeddings_checkbox, extract_entities_checkbox, include_ignored_checkbox, ft.Text("Sensible Dateien können Zugangsdaten enthalten.", size=10, color=WARN), include_sensitive_checkbox], spacing=9), padding=ft.Padding.only(left=12, right=12, bottom=12))],
-                        collapsed_text_color=MUTED, text_color=TEXT,
-                    ),
+                    force_checkbox,
                     ft.ExpansionTile(
                         title=ft.Text("Destruktiver Neuaufbau", color=WARN, size=12, weight=ft.FontWeight.W_600),
                         subtitle=ft.Text("Entfernt den Graph-Bestand des gewählten Roots vor der Neuindexierung", color=MUTED, size=10),
@@ -1214,6 +1295,7 @@ def main(page: ft.Page) -> None:
         page.update()
 
     async def graph_analysis_task() -> None:
+        nonlocal last_analysis_report
         graph_intelligence_status.value = "Graph wird analysiert. Bei großen Datenbeständen kann das dauern …"
         graph_intelligence_status.color = WARN
         graph_intelligence_output.controls.clear()
@@ -1224,6 +1306,7 @@ def main(page: ft.Page) -> None:
         page.update()
         try:
             report = await asyncio.to_thread(_run_graph_analysis, bool(gds_analysis_checkbox.value))
+            last_analysis_report = report
             graph_intelligence_output.controls.clear()
             graph_intelligence_output.controls.extend(analysis_report_controls(report))
             graph_intelligence_status.value = (
@@ -1404,70 +1487,205 @@ def main(page: ft.Page) -> None:
             connection_status.color = BAD
         page.update()
 
-    async def doctor_task() -> None:
+    component_test_status = {
+        "neo4j": ft.Text("Noch nicht gepr" + chr(0x00FC) + "ft", size=12, color=MUTED),
+        "embeddings": ft.Text("Noch nicht gepr" + chr(0x00FC) + "ft", size=12, color=MUTED),
+        "llm": ft.Text("Noch nicht gepr" + chr(0x00FC) + "ft", size=12, color=MUTED),
+    }
+    component_test_details = {
+        key: ft.Text("Noch keine technischen Informationen.", size=10, color=MUTED, selectable=True)
+        for key in ("neo4j", "embeddings", "llm")
+    }
+    component_test_outcomes: dict[str, str] = {}
+
+    async def test_component(component: str) -> None:
         reset_embedding_progress()
         refresh_embedding_progress_controls()
-        global_status.value = "Prüfe Neo4j und Embeddings …"
-        global_status.color = WARN
-        connection_status.value = "Verbindung wird geprüft …"
+        label = {"neo4j": "Neo4j", "embeddings": "Embeddings", "llm": "LLM"}[component]
+        umlaut_u = chr(0x00FC)
+        umlaut_a = chr(0x00E4)
+        control = component_test_status[component]
+        control.value = f"Pr{umlaut_u}fung l{umlaut_a}uft ..."
+        control.color = WARN
+        component_test_outcomes[component] = "running"
+        connection_status.value = f"Pr{umlaut_u}fe {label} ..."
         connection_status.color = WARN
-        connection_details.controls.clear()
-        connection_details.controls.append(ft.Container(
-            content=ft.Row(controls=[ft.ProgressRing(width=18, height=18, stroke_width=2, color=ACCENT), ft.Text("Neo4j und Embedding-Endpunkt werden getestet …", size=12, color=MUTED)], spacing=10),
-            padding=14, bgcolor=PANEL_ALT, border_radius=8,
-        ))
+        component_test_details[component].value = f"Der Verbindungstest läuft."
         page.update()
         try:
-            # The embedding constructor/download blocks, so run it off the Flet
-            # event loop and poll the thread-safe progress state for live UI updates.
-            doctor_future = asyncio.create_task(
-                asyncio.to_thread(_run_doctor, True, publish_embedding_progress)
-            )
-            while not doctor_future.done():
-                if refresh_embedding_progress_controls():
-                    page.update()
-                await asyncio.sleep(0.2)
-            report = await doctor_future
-            if refresh_embedding_progress_controls():
-                page.update()
-            connection_status.value = "Neo4j und Embeddings erreichbar"
-            connection_status.color = GOOD
-            connection_details.controls.clear()
-            connection_details.controls.append(_card(ft.Text(json.dumps(report, ensure_ascii=False, indent=2, default=str), size=11, color=TEXT, selectable=True)))
-            global_status.value = "Neo4j verbunden"
-            global_status.color = GOOD
-            try:
-                header_status_dot.bgcolor = GOOD
-            except NameError:
-                pass
-            stats = report.get("stats") or {}
-            for key in stat_values:
-                stat_values[key].value = str(stats.get(key, 0))
-            for key, control in quality_stat_values.items():
-                control.value = str(stats.get(key, 0))
+            if component == "neo4j":
+                report = await asyncio.to_thread(_run_doctor, False)
+                stats = report.get("stats") or {}
+                for key, value in stats.items():
+                    if key in stat_values:
+                        stat_values[key].value = str(value)
+                detail = {"status": "OK", "uri": report.get("uri"), "database": report.get("database"), "stats": stats}
+            elif component == "embeddings":
+                future = asyncio.create_task(asyncio.to_thread(_run_embedding_test, publish_embedding_progress))
+                while not future.done():
+                    if refresh_embedding_progress_controls():
+                        page.update()
+                    await asyncio.sleep(0.2)
+                detail = await future
+            else:
+                detail = await asyncio.to_thread(_run_llm_test)
+
+            result = str(detail.get("status") or "OK")
+            component_test_outcomes[component] = result
+            if result == "OK":
+                control.value = f"{label}: erfolgreich"
+                control.color = GOOD
+                connection_status.value = f"{label}-Pr{umlaut_u}fung erfolgreich"
+                connection_status.color = GOOD
+            elif result == "DEAKTIVIERT":
+                control.value = f"{label}: deaktiviert"
+                control.color = WARN
+                connection_status.value = f"{label} ist deaktiviert"
+                connection_status.color = WARN
+            else:
+                control.value = f"{label}: {result}"
+                control.color = WARN
+                connection_status.value = f"{label}-Pr{umlaut_u}fung abgeschlossen"
+                connection_status.color = WARN
+            component_test_details[component].value = json.dumps(detail, ensure_ascii=False, indent=2, default=str)
+            if component == "neo4j":
+                global_status.value = "Neo4j verbunden"
+                global_status.color = GOOD
         except Exception as exc:
-            publish_embedding_progress({"phase": "error", "message": f"Embedding-/Verbindungstest fehlgeschlagen: {exc}"})
-            refresh_embedding_progress_controls()
-            connection_status.value = f"Verbindung fehlgeschlagen: {exc}"
+            component_test_outcomes[component] = "FAILED"
+            control.value = f"{label}: fehlgeschlagen"
+            control.color = BAD
+            connection_status.value = f"{label}-Pr{umlaut_u}fung fehlgeschlagen"
             connection_status.color = BAD
-            connection_details.controls.clear()
-            connection_details.controls.append(_card(ft.Text(str(exc), color=BAD, size=12, selectable=True)))
-            global_status.value = "Neo4j nicht erreichbar"
-            global_status.color = BAD
-            try:
-                header_status_dot.bgcolor = BAD
-            except NameError:
-                pass
+            component_test_details[component].value = f"{type(exc).__name__}: {exc}"
+            if component == "neo4j":
+                global_status.value = "Neo4j nicht erreichbar"
+                global_status.color = BAD
+        page.update()
+
+    async def doctor_task() -> None:
+        connection_status.value = f"Gesamttest l{chr(0x00E4)}uft ..."
+        connection_status.color = WARN
+        page.update()
+        for component in ("neo4j", "embeddings", "llm"):
+            await test_component(component)
+        failed = [key for key, value in component_test_outcomes.items() if value == "FAILED"]
+        disabled = [key for key, value in component_test_outcomes.items() if value == "DEAKTIVIERT"]
+        if failed:
+            connection_status.value = f"Gesamttest beendet: mindestens eine Pr{chr(0x00FC)}fung ist fehlgeschlagen."
+            connection_status.color = BAD
+        elif disabled:
+            connection_status.value = "Gesamttest beendet; optionale Dienste sind deaktiviert."
+            connection_status.color = WARN
+        else:
+            connection_status.value = "Gesamttest erfolgreich."
+            connection_status.color = GOOD
         page.update()
 
     def build_connection_view() -> ft.Control:
         rows: list[ft.Control] = []
         for key, value in _settings_preview().items():
-            rows.append(ft.Container(content=ft.Row(controls=[ft.Text(key, size=11, color=MUTED, width=175), ft.Text(value, size=11, color=TEXT, selectable=True, expand=True)], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=12), padding=ft.Padding.symmetric(vertical=7), border=ft.Border.only(bottom=ft.BorderSide(1, BORDER))))
-        config_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("TUNE_OUTLINED"), BLUE, size=42), ft.Column(controls=[_eyebrow("CONFIGURATION"), ft.Text("Projektkonfiguration", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Datenbank, Embeddings und optionale KI unabhängig konfigurieren.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), *rows, ft.Button(content="Setup-Assistent öffnen", icon=_safe_icon("EDIT_NOTE_OUTLINED"), on_click=open_env_file)], spacing=8), padding=18)
-        mcp_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("CABLE_OUTLINED"), ACCENT, size=42), ft.Column(controls=[_eyebrow("EXTERNAL ACCESS"), ft.Text("MCP für externe LLMs", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Der MCP-Prozess wird vom jeweiligen MCP-Client gestartet.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), ft.Row(controls=[_status_pill("Transport: stdio", BLUE), _status_pill("Clientstatus nicht direkt ermittelbar", WARN)], wrap=True, spacing=8), ft.Text("Die Werkzeuge stellen u. a. Such- und Kontextzugriff, Graph-Statistiken, Analysefunktionen, Beziehungsvorschläge und Quelleninformationen bereit. Die Desktop-GUI selbst enthält bewusst keine Chat-/RAG-Oberfläche.", size=11, color=MUTED, selectable=True)], spacing=12), padding=18)
-        health_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("MONITOR_HEART_OUTLINED"), GOOD, size=42), ft.Column(controls=[_eyebrow("HEALTH CHECK"), ft.Text("Verbindung & Laufzeit", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Neo4j und das konfigurierte Embedding-Modell testen.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), ft.Row(controls=[connection_status, ft.Container(width=8), ft.Button(content="Systemtest starten", icon=_safe_icon("PLAY_ARROW_ROUNDED"), on_click=lambda e: page.run_task(doctor_task))], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True), connection_embedding_progress_panel, connection_details], spacing=12), padding=18)
-        return ft.Column(controls=[ft.Row(controls=[ft.Container(content=config_panel, expand=7), ft.Container(content=ft.Column(controls=[mcp_panel, health_panel], spacing=14), expand=5)], spacing=14, vertical_alignment=ft.CrossAxisAlignment.START)], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
+            rows.append(ft.Container(
+                content=ft.Row(controls=[
+                    ft.Text(key, size=11, color=MUTED, width=175),
+                    ft.Text(value, size=11, color=TEXT, selectable=True, expand=True),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=12),
+                padding=ft.Padding.symmetric(vertical=7),
+                border=ft.Border.only(bottom=ft.BorderSide(1, BORDER)),
+            ))
+        config_panel = _card(ft.Column(controls=[
+            ft.Row(controls=[
+                _icon_tile(_safe_icon("TUNE_OUTLINED"), BLUE, size=42),
+                ft.Column(controls=[
+                    _eyebrow("KONFIGURATION"),
+                    ft.Text("Projektkonfiguration", size=16, weight=ft.FontWeight.W_600, color=TEXT),
+                    ft.Text("Datenbank, Embeddings und optionale KI unabhängig konfigurieren.", size=11, color=MUTED),
+                ], spacing=4, expand=True),
+            ], spacing=12),
+            ft.Divider(color=BORDER),
+            *rows,
+            ft.Button(content="Setup-Assistent öffnen", icon=_safe_icon("EDIT_NOTE_OUTLINED"), on_click=open_env_file),
+        ], spacing=8), padding=18)
+
+        mcp_panel = _card(ft.Column(controls=[
+            ft.Row(controls=[
+                _icon_tile(_safe_icon("CABLE_OUTLINED"), ACCENT, size=42),
+                ft.Column(controls=[
+                    _eyebrow("EXTERNAL ACCESS"),
+                    ft.Text("MCP für externe LLMs", size=16, weight=ft.FontWeight.W_600, color=TEXT),
+                    ft.Text("Der MCP-Prozess wird vom jeweiligen MCP-Client gestartet.", size=11, color=MUTED),
+                ], spacing=4, expand=True),
+            ], spacing=12),
+            ft.Divider(color=BORDER),
+            ft.Row(controls=[
+                _status_pill("Transport: stdio", BLUE),
+                _status_pill("Clientstatus nicht direkt ermittelbar", WARN),
+            ], wrap=True, spacing=8),
+            ft.Text(
+                "Die Werkzeuge bieten Suche, Kontextzugriff, Graph-Statistiken, Analysefunktionen, "
+                "Beziehungsvorschläge und Quelleninformationen. Die Desktop-GUI enthält keine Chat-Oberfläche.",
+                size=11, color=MUTED, selectable=True,
+            ),
+        ], spacing=12), padding=18)
+
+        def test_card(key: str, title: str, description: str, icon: str) -> ft.Control:
+            controls: list[ft.Control] = [
+                ft.Row(controls=[
+                    ft.Icon(_safe_icon(icon), size=17, color=ACCENT),
+                    ft.Column(controls=[
+                        ft.Text(title, size=13, weight=ft.FontWeight.W_600, color=TEXT),
+                        ft.Text(description, size=10, color=MUTED),
+                    ], spacing=2, expand=True),
+                ], spacing=8),
+                ft.Row(controls=[
+                    ft.Button(
+                        content="Testen",
+                        icon=_safe_icon("PLAY_ARROW_ROUNDED"),
+                        on_click=lambda e, k=key: page.run_task(test_component, k),
+                    ),
+                    component_test_status[key],
+                ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True),
+            ]
+            if key == "embeddings":
+                controls.append(connection_embedding_progress_panel)
+            controls.append(ft.ExpansionTile(
+                title=ft.Text("Technische Details", size=10, color=TEXT),
+                controls=[ft.Container(content=component_test_details[key], padding=5, bgcolor=BG, border_radius=8)],
+                controls_padding=0,
+                tile_padding=ft.Padding.symmetric(horizontal=4, vertical=0),
+                dense=True,
+                min_tile_height=32,
+                collapsed_text_color=MUTED,
+                text_color=TEXT,
+            ))
+            return _card(ft.Column(controls=controls, spacing=4), padding=8, bgcolor=PANEL_ALT)
+
+        health_panel = _card(ft.Column(controls=[
+            ft.Row(controls=[
+                _icon_tile(_safe_icon("MONITOR_HEART_OUTLINED"), GOOD, size=34),
+                ft.Column(controls=[
+                    _eyebrow("VERBINDUNG & LAUFZEIT"),
+                    ft.Text("Systemtests", size=15, weight=ft.FontWeight.W_600, color=TEXT),
+                    ft.Text("Dienste einzeln oder gemeinsam pr" + chr(0x00FC) + "fen.", size=10, color=MUTED),
+                ], spacing=3, expand=True),
+            ], spacing=9),
+            ft.Divider(color=BORDER),
+            ft.Button(
+                content="Gesamttest starten",
+                icon=_safe_icon("PLAY_ARROW_ROUNDED"),
+                on_click=lambda e: page.run_task(doctor_task),
+                height=36,
+            ),
+            connection_status,
+            test_card("neo4j", "Neo4j", "Datenbankverbindung und Graphzugriff", "STORAGE_OUTLINED"),
+            test_card("embeddings", "Embeddings", "Embedding-Anbieter und Vektorerzeugung", "HUB_OUTLINED"),
+            test_card("llm", "LLM", "Chat-Endpunkt und Modellverbindung", "CHAT_OUTLINED"),
+        ], spacing=9), padding=12)
+        top_row = ft.Row(controls=[
+            ft.Container(content=config_panel, expand=7),
+            ft.Container(content=ft.Column(controls=[health_panel, mcp_panel], spacing=10), expand=5),
+        ], spacing=14, vertical_alignment=ft.CrossAxisAlignment.START)
+        return ft.Column(controls=[top_row], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
     # ---------------- Main navigation & desktop shell ----------------
     view_builders: dict[str, Callable[[], ft.Control]] = {
@@ -1521,8 +1739,6 @@ def main(page: ft.Page) -> None:
         page.update()
         if key == "quality":
             page.run_task(graph_candidates_task)
-        elif key == "intelligence":
-            page.run_task(graph_capabilities_task)
 
     nav_controls: list[ft.Control] = []
     section_for_key = {"dashboard": "COMMAND", "scan": "KNOWLEDGE BASE", "graph": "KNOWLEDGE BASE", "quality": "INTELLIGENCE", "intelligence": "INTELLIGENCE", "connection": "SYSTEM"}
@@ -1565,18 +1781,12 @@ def main(page: ft.Page) -> None:
                 ft.Divider(color=BORDER),
                 ft.Column(controls=nav_controls, spacing=2),
                 ft.Container(expand=True),
-                _card(ft.Column(controls=[
-                    ft.Row(controls=[ft.Container(width=7, height=7, bgcolor=ACCENT, border_radius=4), ft.Text("GRAPH ENGINE", size=9, weight=ft.FontWeight.BOLD, color=ACCENT)], spacing=7),
-                    ft.Text("Neo4j-first architecture", size=11, weight=ft.FontWeight.W_600, color=TEXT),
-                    ft.Text("Native graph · GDS · MCP", size=10, color=MUTED),
-                    ft.Text("Keine Quelldateien werden verändert.", size=9, color=SUBTLE),
-                ], spacing=7), padding=13, bgcolor="#0B1C36", border_color="#1A3554", radius=12),
                 ft.Text(f"ENARGEIA  •  {__version__}", size=8, color=SUBTLE, text_align=ft.TextAlign.CENTER),
             ], expand=True, spacing=4,
         ),
     )
 
-    header_status_dot = ft.Container(width=7, height=7, bgcolor=SUBTLE, border_radius=4)
+    header_status_dot = ft.Container(content=ft.Image(src="data:image/png;base64," + image_as_base64("Enargeia_Symbol_512.png"), width=20, height=20), width=24, height=24)
     header = ft.Container(
         padding=ft.Padding.symmetric(horizontal=26, vertical=15),
         bgcolor=HEADER,
@@ -1621,10 +1831,6 @@ def main(page: ft.Page) -> None:
             overview_message.color = GOOD
             global_status.value = "Neo4j verbunden"
             global_status.color = GOOD
-            try:
-                header_status_dot.bgcolor = GOOD
-            except NameError:
-                pass
             source_root_list.controls.clear()
             if not roots:
                 empty_text = "Noch keine Roots indexiert. Wähle ein Verzeichnis und starte den ersten Scan."
@@ -1644,10 +1850,6 @@ def main(page: ft.Page) -> None:
             overview_message.color = BAD
             global_status.value = "Verbindung prüfen"
             global_status.color = BAD
-            try:
-                header_status_dot.bgcolor = BAD
-            except NameError:
-                pass
             for key in stat_values:
                 stat_values[key].value = "–"
             for control in quality_stat_values.values():
@@ -1738,3 +1940,4 @@ def main(page: ft.Page) -> None:
 
 if __name__ == "__main__":
     ft.run(main)
+

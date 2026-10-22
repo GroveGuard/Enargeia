@@ -48,7 +48,7 @@ def _checksum_from_url(url: str) -> str | None:
     """Return the publisher's SHA-256 sidecar if one is available."""
     for suffix in (".sha256", ".sha256sum"):
         try:
-            request = urllib.request.Request(url + suffix, headers={"User-Agent": "Enargeia/1.2.0"})
+            request = urllib.request.Request(url + suffix, headers={"User-Agent": "Enargeia/1.2.1"})
             with urllib.request.urlopen(request, timeout=15) as response:
                 body = response.read(4096).decode("ascii", errors="ignore")
             match = re.search(r"\b([0-9a-fA-F]{64})\b", body)
@@ -64,7 +64,7 @@ def _download(url: str, target: Path, progress: Progress | None, label: str,
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + ".part")
     digest = hashlib.sha256()
-    request = urllib.request.Request(url, headers={"User-Agent": "Enargeia/1.2.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "Enargeia/1.2.1"})
     try:
         with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as output:
             total = int(response.headers.get("Content-Length") or 0)
@@ -109,7 +109,7 @@ def _adoptium_jre_package() -> tuple[str, str]:
         "https://api.adoptium.net/v3/assets/latest/21/hotspot"
         "?architecture=x64&image_type=jre&os=windows&vendor=eclipse"
     )
-    request = urllib.request.Request(url, headers={"User-Agent": "Enargeia/1.2.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "Enargeia/1.2.1"})
     with urllib.request.urlopen(request, timeout=30) as response:
         assets = json.loads(response.read().decode("utf-8"))
     if not assets:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 import types
 
@@ -99,24 +100,75 @@ def test_fastembed_download_failure_includes_cache_and_root_cause(monkeypatch, t
     assert str(tmp_path / "models" / "fastembed") in str(caught.value)
 
 
-def test_fastembed_retries_from_cache_after_first_process_download_error(monkeypatch, tmp_path):
+def test_fastembed_download_failure_is_reported_without_retry(monkeypatch, tmp_path):
     calls = []
 
-    class FirstAttemptFailsThenCacheLoads:
+    class DownloadFails:
         def __init__(self, model_name, cache_dir, threads=None, local_files_only=False):
             calls.append(local_files_only)
-            if not local_files_only:
-                raise ValueError(f"Could not load model {model_name} from any source.")
-
-        def embed(self, texts, batch_size=256):
-            return iter([[0.1, 0.2]][:len(texts)])
+            raise ValueError(f"Could not load model {model_name} from any source.")
 
     monkeypatch.setattr("winkg.embeddings.APP_DATA_DIR", tmp_path)
-    monkeypatch.setitem(sys.modules, "fastembed", types.SimpleNamespace(TextEmbedding=FirstAttemptFailsThenCacheLoads))
+    monkeypatch.setitem(sys.modules, "fastembed", types.SimpleNamespace(TextEmbedding=DownloadFails))
     client = EmbeddingClient(Settings(embedding_provider="fastembed"))
 
-    assert client.embed_one("test") == [0.1, 0.2]
-    assert calls == [False, True]
+    with pytest.raises(EmbeddingError, match="Could not load model"):
+        client.embed_one("test")
+    assert calls == [False]
+
+
+def test_windows_fastembed_cache_symlinks_are_materialized(monkeypatch, tmp_path):
+    import os
+    import winkg.embeddings as embedding_module
+
+    cache_dir = tmp_path / "models" / "fastembed"
+    repo_dir = cache_dir / "models--Qdrant--example"
+    blob = repo_dir / "blobs" / "model-hash"
+    snapshot_file = repo_dir / "snapshots" / "revision" / "model.onnx"
+    blob.parent.mkdir(parents=True)
+    snapshot_file.parent.mkdir(parents=True)
+    blob.write_bytes(b"model data")
+    try:
+        os.symlink(os.path.relpath(blob, snapshot_file.parent), snapshot_file)
+    except OSError as exc:
+        pytest.skip(f"Symbolic links are unavailable: {exc}")
+
+    assert embedding_module._materialize_huggingface_cache_symlinks(cache_dir) == 1
+    assert not snapshot_file.is_symlink()
+    assert snapshot_file.read_bytes() == b"model data"
+
+
+def test_huggingface_hub_wont_create_new_cache_symlinks(monkeypatch, tmp_path):
+    import os
+    import winkg.embeddings as embedding_module
+    from huggingface_hub import file_download
+
+    if os.name != "nt":
+        pytest.skip("Windows cache compatibility only")
+    cache_root = tmp_path.resolve()
+    monkeypatch.setitem(file_download._are_symlinks_supported_in_dir, str(cache_root), True)
+
+    embedding_module._disable_huggingface_cache_symlinks(cache_root)
+
+    assert file_download._are_symlinks_supported_in_dir[str(cache_root)] is False
+
+
+def test_fastembed_loguru_diagnostics_reach_app_log_without_url_query_secrets(caplog):
+    from loguru import logger as loguru_logger
+    from winkg.embeddings import _fastembed_log_hook
+
+    diagnostic_logger = loguru_logger.patch(
+        lambda record: record.update(name="fastembed.common.model_management")
+    )
+    with caplog.at_level(logging.WARNING):
+        with _fastembed_log_hook():
+            diagnostic_logger.error(
+                "Could not download model: https://huggingface.co/model?token=secret"
+            )
+
+    assert "Could not download model" in caplog.text
+    assert "https://huggingface.co/model?<query redacted>" in caplog.text
+    assert "secret" not in caplog.text
 
 
 def test_huggingface_transfer_progress_is_reported_without_a_console():

@@ -44,7 +44,7 @@ function Install-DevelopmentEnvironment {
 
 function Assert-DevelopmentEnvironment {
   if (-not (Test-Path -LiteralPath $Python)) {
-    throw "Die Entwicklungsumgebung fehlt. Einmal 'setup_windows.bat' oder 'scripts\dev.ps1 -Command setup' ausführen."
+    throw "Die Entwicklungsumgebung fehlt. Einmal 'setup_windows.bat' oder 'scripts\dev.ps1 -Command setup' ausfuehren."
   }
 }
 
@@ -57,7 +57,13 @@ switch ($Command) {
   }
   'run' {
     Assert-DevelopmentEnvironment
-    Write-Host 'Starte Enargeia direkt aus dem Quellcode. Änderungen werden nach einem Neustart übernommen.' -ForegroundColor Cyan
+    $SourcePath = Join-Path $ProjectRoot 'src'
+    if ($env:PYTHONPATH) {
+      $env:PYTHONPATH = "$SourcePath;$env:PYTHONPATH"
+    } else {
+      $env:PYTHONPATH = $SourcePath
+    }
+    Write-Host 'Starte Enargeia direkt aus dem Quellcode. Aenderungen werden nach einem Neustart uebernommen.' -ForegroundColor Cyan
     Invoke-Checked $Python (@('-m', 'winkg.bootstrap') + $Arguments)
   }
   'test' {

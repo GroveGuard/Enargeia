@@ -1,5 +1,5 @@
 #define MyAppName "Enargeia"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.1"
 #define MyAppPublisher "Enargeia"
 #define MyAppExeName "Enargeia.exe"
 #define BrandRoot "..\..\assets\branding\Enargeia_Corporate_Design"

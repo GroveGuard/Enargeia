@@ -5,7 +5,7 @@
   <p>Windows-Desktop-Anwendung zum Aufbau, zur Qualitätssicherung und zur Analyse eines Unternehmens-Knowledge-Graphen.</p>
 
   <p>
-    <img src="https://img.shields.io/badge/Version-1.2.0-1677FF?style=flat-square" alt="Version 1.2.0">
+    <img src="https://img.shields.io/badge/Version-1.2.1-1677FF?style=flat-square" alt="Version 1.2.1">
     <img src="https://img.shields.io/badge/Plattform-Windows%20x64-071326?style=flat-square" alt="Windows x64">
     <img src="https://img.shields.io/badge/Python-3.10--3.13-3776AB?style=flat-square" alt="Python 3.10 bis 3.13">
   </p>
@@ -283,4 +283,4 @@ Die editierbaren SVG-Originale, PNG-Exporte, Windows-Icons, Installer-Banner, Sp
 
 ## Projektstatus und Lizenz
 
-Die Projektversion ist **1.2.0**. Sie wird in `pyproject.toml`, `src/winkg/__init__.py` und der Windows-Installer-Konfiguration geführt.
+Die Projektversion ist **1.2.1**. Sie wird in `pyproject.toml`, `src/winkg/__init__.py` und der Windows-Installer-Konfiguration geführt.

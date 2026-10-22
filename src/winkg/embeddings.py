@@ -3,6 +3,9 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
+import shutil
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -15,6 +18,8 @@ from .config import APP_DATA_DIR, Settings
 
 log = logging.getLogger(__name__)
 _FASTEMBED_SNAPSHOT_PATCH_LOCK = threading.Lock()
+_FASTEMBED_LOG_HOOK_LOCK = threading.Lock()
+_FASTEMBED_URL_QUERY = re.compile(r"(https?://[^\s?]+)\?[^\s]+")
 
 DEFAULT_FASTEMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
@@ -48,6 +53,98 @@ def _prepare_huggingface_download_environment(cache_dir: Path) -> None:
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
     os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
+
+
+def _materialize_huggingface_cache_symlinks(cache_dir: Path) -> int:
+    """Replace model snapshot links with local files for Windows-safe traversal."""
+    cache_root = Path(cache_dir).resolve()
+    materialized = 0
+    for snapshots in cache_root.glob("models--*/snapshots"):
+        if not snapshots.is_dir():
+            continue
+        for snapshot in snapshots.iterdir():
+            if not snapshot.is_dir():
+                continue
+            for current, directories, filenames in os.walk(snapshot, followlinks=False):
+                directories[:] = [
+                    name for name in directories
+                    if not (Path(current) / name).is_symlink()
+                ]
+                for name in filenames:
+                    link_path = Path(current) / name
+                    if not link_path.is_symlink():
+                        continue
+                    link_target = os.readlink(link_path)
+                    target_path = Path(os.path.abspath(link_path.parent / link_target))
+                    try:
+                        common_path = os.path.commonpath((str(cache_root), str(target_path)))
+                    except ValueError as exc:
+                        raise OSError(f"FastEmbed-Cachelink liegt auf einem anderen Laufwerk: {link_path}") from exc
+                    if os.path.normcase(common_path) != os.path.normcase(str(cache_root)):
+                        raise OSError(f"FastEmbed-Cachelink zeigt außerhalb des Modellcaches: {link_path}")
+                    if target_path.is_symlink() or not target_path.is_file():
+                        raise OSError(f"FastEmbed-Cachelink hat kein reguläres Blob-Ziel: {link_path}")
+
+                    temporary_path: Path | None = None
+                    try:
+                        with tempfile.NamedTemporaryFile(
+                            dir=link_path.parent, prefix=f".{link_path.name}.", suffix=".tmp", delete=False
+                        ) as temporary_file:
+                            temporary_path = Path(temporary_file.name)
+                        shutil.copyfile(target_path, temporary_path)
+                        if temporary_path.stat().st_size != target_path.stat().st_size:
+                            raise OSError(f"FastEmbed-Cachekopie ist unvollständig: {link_path}")
+                        os.replace(temporary_path, link_path)
+                        materialized += 1
+                    finally:
+                        if temporary_path is not None:
+                            temporary_path.unlink(missing_ok=True)
+    return materialized
+
+
+def _disable_huggingface_cache_symlinks(cache_dir: Path) -> None:
+    """Prevent new Hugging Face snapshot links that Windows may reject as untrusted."""
+    if os.name != "nt":
+        return
+    from huggingface_hub import file_download
+
+    # Hub 0.36.2 caches symlink capability per resolved cache directory.
+    # Pinning it off avoids reintroducing links after old snapshots are copied.
+    cache_root = str(Path(cache_dir).expanduser().resolve())
+    symlink_cache = getattr(file_download, "_are_symlinks_supported_in_dir", None)
+    if not isinstance(symlink_cache, dict):
+        raise RuntimeError("Hugging Face Hub unterstützt die Windows-symlinkfreie Cachekonfiguration nicht.")
+    symlink_cache[cache_root] = False
+
+
+def _has_complete_fastembed_snapshot(text_embedding: Any, model_name: str, cache_dir: Path) -> bool:
+    """Return whether the selected model's required files already exist in the app cache."""
+    try:
+        model = next(
+            item for item in text_embedding.list_supported_models()
+            if str(item.get("model") or "") == model_name
+        )
+        repo_id = str((model.get("sources") or {}).get("hf") or "").strip()
+        required_files = [
+            str(name)
+            for name in [model.get("model_file"), *(model.get("additional_files") or [])]
+            if name
+        ]
+        if not repo_id or not required_files:
+            return False
+        snapshots = Path(cache_dir) / f"models--{repo_id.replace('/', '--')}" / "snapshots"
+        if not snapshots.is_dir():
+            return False
+        return any(
+            all((snapshot / name).is_file() for name in required_files)
+            for snapshot in snapshots.iterdir()
+            if snapshot.is_dir()
+        )
+    except Exception:
+        # Cache inspection is only an optimization; normal FastEmbed resolution
+        # below remains authoritative for custom or older model registries.
+        log.debug("FastEmbed-Modellcache konnte nicht vorgeprueft werden", exc_info=True)
+        return False
 
 
 def _make_huggingface_progress_class(
@@ -169,6 +266,36 @@ def _fastembed_download_progress_hook(
             model_management.snapshot_download = original_snapshot_download
 
 
+@contextmanager
+def _fastembed_log_hook() -> Iterator[None]:
+    """Forward FastEmbed's Loguru diagnostics to the application's log file."""
+    from loguru import logger as fastembed_logger
+
+    with _FASTEMBED_LOG_HOOK_LOCK:
+        def forward(message: Any) -> None:
+            record = message.record
+            detail = _FASTEMBED_URL_QUERY.sub(r"\1?<query redacted>", record["message"])
+            log.log(
+                record["level"].no,
+                "FastEmbed [%s]: %s",
+                record["name"],
+                detail,
+            )
+
+        sink_id = fastembed_logger.add(
+            forward,
+            level="WARNING",
+            format="{message}",
+            filter=lambda record: str(record["name"] or "").startswith("fastembed"),
+            backtrace=False,
+            diagnose=False,
+        )
+        try:
+            yield
+        finally:
+            fastembed_logger.remove(sink_id)
+
+
 class EmbeddingError(RuntimeError):
     pass
 
@@ -248,6 +375,19 @@ class EmbeddingClient:
                     "Dateien oder die Microsoft Visual C++ Runtime die Ursache sein."
                 ) from exc
 
+            if os.name == "nt":
+                try:
+                    materialized = _materialize_huggingface_cache_symlinks(cache_dir)
+                    _disable_huggingface_cache_symlinks(cache_dir)
+                except (OSError, RuntimeError, ImportError) as exc:
+                    log.exception("Windows-FastEmbed-Cache konnte nicht symlinkfrei vorbereitet werden")
+                    raise EmbeddingError(
+                        f"Der Windows-Modellcache konnte nicht sicher vorbereitet werden "
+                        f"({cache_dir}). Ursache: {type(exc).__name__}: {exc}"
+                    ) from exc
+                if materialized:
+                    log.info("Windows-FastEmbed-Cache vorbereitet: %s Symlinks durch Kopien ersetzt", materialized)
+
             model_name = self.settings.embedding_model or DEFAULT_FASTEMBED_MODEL
             log.info("Initialisiere lokales FastEmbed-Modell %s", model_name)
             result: dict[str, object] = {}
@@ -258,32 +398,39 @@ class EmbeddingClient:
 
             def construct_model() -> None:
                 try:
-                    with _fastembed_download_progress_hook(self.progress_callback):
-                        try:
-                            result["model"] = TextEmbedding(
-                                model_name=model_name,
-                                cache_dir=str(cache_dir),
-                                threads=self.settings.embedding_threads or None,
-                            )
-                        except ValueError as exc:
-                            # FastEmbed can finish materializing the Hugging Face
-                            # snapshot and still report its generic "from any
-                            # source" error on the first process. A second
-                            # process then succeeds from the cache, which used to
-                            # force users to restart the application. Retry once
-                            # against the cache that the first attempt populated.
-                            if "Could not load model" not in str(exc):
-                                raise
-                            log.warning(
-                                "FastEmbed-Download meldete einen Fehler; versuche den lokalen Cache erneut (%s)",
-                                model_name,
-                            )
-                            result["model"] = TextEmbedding(
-                                model_name=model_name,
-                                cache_dir=str(cache_dir),
-                                threads=self.settings.embedding_threads or None,
-                                local_files_only=True,
-                            )
+                    with _fastembed_log_hook(), _fastembed_download_progress_hook(self.progress_callback):
+                        def create_model(*, local_files_only: bool = False) -> Any:
+                            kwargs: dict[str, Any] = {
+                                "model_name": model_name,
+                                "cache_dir": str(cache_dir),
+                                "threads": self.settings.embedding_threads or None,
+                            }
+                            if local_files_only:
+                                kwargs["local_files_only"] = True
+                            return TextEmbedding(**kwargs)
+
+                        # Prefer an already-complete per-user snapshot before
+                        # attempting a network refresh. In a frozen Windows
+                        # process, Hugging Face can fail its first online
+                        # resolution even though all model files are present;
+                        # the same cache then works after restarting the app.
+                        if _has_complete_fastembed_snapshot(TextEmbedding, model_name, cache_dir):
+                            try:
+                                result["model"] = create_model(local_files_only=True)
+                                log.info("Verwende vollstaendigen FastEmbed-Cache fuer %s", model_name)
+                            except ValueError as cache_exc:
+                                if "Could not load model" not in str(cache_exc):
+                                    raise
+                                log.warning(
+                                    "Vollstaendiger FastEmbed-Cache konnte nicht direkt geladen werden; "
+                                    "verwende die normale Cache-/Download-Aufloesung (%s)",
+                                    model_name,
+                                    exc_info=True,
+                                )
+
+                        if "model" in result:
+                            return
+                        result["model"] = create_model()
                 except Exception as exc:  # transfer errors originate in the worker thread
                     result["error"] = exc
 
