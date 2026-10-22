@@ -25,7 +25,7 @@ def test_graph_explorer_launches_a_native_animated_3d_viewer():
     assert "labelCandidates.sort((a,b)=>b.priority-a.priority)" in html_source
     assert "const collides=placed.some" in html_source
     assert "pointermove" in html_source and "cameraDistance" in html_source
-    assert all(color in html_source for color in ("#31d7c0", "#58aaff", "#ffb75f", "#b99aff"))
+    assert all(color in html_source for color in ("#11C5E8", "#1677FF", "#F2B95D", "#8057F5"))
 
 
 def test_navigation_caches_page_control_trees():
@@ -177,3 +177,14 @@ def test_data_source_cards_have_equal_bounded_heights_without_stretch_constraint
     assert "vertical_alignment=ft.CrossAxisAlignment.START" in scan_view
     assert "vertical_alignment=ft.CrossAxisAlignment.STRETCH" not in scan_view
     assert "spacing=13, scroll=ft.ScrollMode.AUTO, expand=True" in scan_view
+
+
+def test_fastembed_download_progress_is_visible_in_connection_and_scan_views():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+    assert "connection_embedding_progress_panel" in source
+    assert "scan_embedding_progress_panel" in source
+    assert "ft.ProgressBar(value=None" in source
+    assert "refresh_embedding_progress_controls()" in source
+    assert "asyncio.to_thread(_run_doctor, True, publish_embedding_progress)" in source
+    assert "DirectoryIndexer(settings, embedding_progress_callback=publish_embedding_progress)" in source
+    assert "Modell herunterladen" in source or "Modell-Dateien werden heruntergeladen" in source

@@ -162,7 +162,7 @@ def _cmd_analyze_graph(args: argparse.Namespace) -> int:
             root_id=root_id,
             max_sample_chunks=args.max_sample_chunks,
             max_candidates=args.max_candidates,
-            run_gds=not args.no_gds,
+            run_gds=(not args.no_gds and not (settings.neo4j_mode == "local" and not settings.gds_enabled)),
         )
         _json_print(result)
         return 0 if result.get("status") == "completed" else 1
@@ -197,7 +197,7 @@ def _cmd_review_link_candidate(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="win-kg",
+        prog="enargeia-cli",
         description="Unternehmenswissen in Neo4j aufbauen, durchsuchen und mit Graphalgorithmen analysieren.",
     )
     parser.add_argument("--log-level", default=None, help="Logging-Level (DEBUG, INFO, WARNING)")

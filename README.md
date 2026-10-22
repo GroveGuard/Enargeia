@@ -1,395 +1,290 @@
-# Neo4j Company Knowledge Graph
+<div align="center">
+  <img src="assets/branding/Enargeia_Corporate_Design/logo/Enargeia_Logo_Dark_Background.png" alt="Enargeia – Wissen verbindet" width="720">
 
-Ein ausführbares Python-Projekt, das Windows-Verzeichnisse rekursiv inventarisiert, lesbare Inhalte extrahiert und mehrere Quellen zu einem nachvollziehbaren Unternehmenswissensgraphen in Neo4j verbindet. Es bietet inkrementelle Synchronisierung, Hybrid Search (Vektor + Volltext), Quellenpfade, optionale LLM-Entity-Extraktion und einen MCP-Server für Agents wie Claude Code, Hermes oder andere MCP-Clients.
+  <p><strong>Unternehmenswissen als vernetzter Graph.</strong></p>
+  <p>Windows-Desktop-Anwendung zum Aufbau, zur Qualitätssicherung und zur Analyse eines Unternehmens-Knowledge-Graphen.</p>
 
-**Aktuelle Release-Version: `1.0.0`**
+  <p>
+    <img src="https://img.shields.io/badge/Version-1.2.0-1677FF?style=flat-square" alt="Version 1.2.0">
+    <img src="https://img.shields.io/badge/Plattform-Windows%20x64-071326?style=flat-square" alt="Windows x64">
+    <img src="https://img.shields.io/badge/Python-3.10--3.13-3776AB?style=flat-square" alt="Python 3.10 bis 3.13">
+  </p>
+</div>
+
+<p align="center">
+  <img src="assets/branding/Enargeia_Corporate_Design/preview/Enargeia_Asset_Overview.jpg" alt="Enargeia Corporate Design: Logos, App-Icons und Installer-Grafiken" width="900">
+</p>
+
+## Überblick
+
+**Enargeia** baut aus ausgewählten Windows-Verzeichnissen einen durch Quellen belegten Wissensgraphen in Neo4j auf. Dokumente und Textabschnitte werden mit Metadaten, Entitäten und Beziehungen verknüpft. So lassen sich Strukturen, Abhängigkeiten und mögliche Wissenslücken nachvollziehen, statt Dateien nur als isolierte Einträge zu verwalten.
+
+Die Desktop-Oberfläche konzentriert sich bewusst auf den **Aufbau, die Verwaltung, die Qualitätssicherung und die Analyse** des Graphen. Sie enthält keine Chat- oder RAG-Oberfläche. Inhaltliche Suche und Kontextzugriff stehen über die CLI und den MCP-Server für externe LLM-Clients zur Verfügung.
 
 ## Funktionen
 
-- Rekursiver Scan und inkrementelle Aktualisierung: unveränderte Dateien werden übersprungen; geänderte Dateien erhalten neue Chunks; gelöschte Dateien werden bei einem vollständigen Scan entfernt.
-- Strukturgraph: `KGRoot → KGFolder → KGFile → KGChunk`.
-- Inhalte und Quellenprovenienz: Chunk-Text, Originalpfad, relativer Pfad, SHA-256 für verarbeitete Inhalte, Änderungszeit, Position im Dokument sowie erkannte PDF-Seite/Überschrift.
-- Hybrid Search: Neo4j-Vektorsuche plus Volltextsuche und Dateinamen-Treffer, mit Reciprocal Rank Fusion statt direktem Vergleich unterschiedlicher Scores. Aus den Top-Treffern erweitert eine begrenzte Cypher-Graphsuche über 1–2 Beziehungsschritte die Suche um weitere quellengebundene Abschnitte; das benötigt kein LLM.
-- Optionale semantische Graph-Erweiterung: `KGEntity`, `KG_MENTIONS`, quellenbelegte `KGAssertion`-Knoten und `KG_RELATED_TO`-Kanten. Die Extraktion kann über die GUI oder `--extract-entities` aktiviert werden. Aussagen werden nur dann direkt aktiviert, wenn ein wörtlicher Quellbeleg, beide Entitätsnamen, eine bekannte Polarität, ein gültiger Zeitraum und die Mindestkonfidenz geprüft wurden. Nur aktive, konsolidierte `KG_ASSERTED_LINK`-Kanten werden für Graphsuche und Entitäts-GDS-Analysen verwendet.
-- Neo4j-first Graph Intelligence: persistente Analyse-Läufe, Findings, exakte Inhaltsidentitäten, prüfbare Beziehungskandidaten, Qualitätsentscheidungen, Lernprofile und konsolidierte Aussagen werden direkt in Neo4j gespeichert. Der automatische Cleanup hält pro Root die letzten 20 Analyse-Läufe vollständig und verdichtet ältere Läufe in einem einzigen historischen Zusammenfassungsknoten.
-- **Community Summaries + Global Search:** Nach der GDS-Community-Erkennung kann das LLM quellengebundene Zusammenfassungen geeigneter Communities als stabile `KGInsight`-Knoten speichern. Unveränderte Zusammenfassungen werden anhand eines Inhaltsfingerprints wiederverwendet; pro Analyse werden höchstens acht geänderte Communities in maximal vier Batches zusammengefasst (Standardwerte). Die Global Search kombiniert diese Verdichtungen mit konkreten Suchtreffern und gibt Originalquellenpfade zurück. Summaries sind abgeleitetes Wissen und kein eigenständiger Beweis.
-- Autonomer Qualitätszyklus: Graphanalysen prüfen offene Kandidaten in kleinen LLM-Batches. Jede Annahme wird gegen die aktuelle Originalquelle erneut deterministisch verifiziert, bevor eine bestätigte Aussage gespeichert wird. Unsichere Fälle bleiben offen/vertagt; automatische Entscheidungen werden protokolliert und nach Quellenänderungen erneut prüfbar. Manuelle Entscheidungen bleiben als optionale Overrides möglich.
-- Neo4j-gestützter LLM-Extraktionscache: erfolgreiche Ergebnisse werden nach Inhaltshash, Chat-Modell-Endpunkt und Prompt-Version in `KGExtractionCache` gespeichert. Identische Chunks können über Dateien und Roots hinweg wiederverwendet werden. Cache-Treffer, Cache-Misses und LLM-Aufrufe werden separat gezählt; der Cache enthält keine API-Schlüssel.
-- Optionale Neo4j Graph Data Science (GDS)-Analyse: Community Detection (Leiden oder Louvain), Weakly Connected Components, PageRank und Node Similarity, sofern die jeweilige Prozedur verfügbar ist. Node Similarity erzeugt strukturelle Beziehungskandidaten auf Basis ähnlicher Graphnachbarschaften. Communities, Komponenten und Scores sind erneuerbare Ableitungen; es wird keine zusätzliche persistente Datenbank verwendet. `GDS_MAX_ENTITY_NODES` begrenzt die In-Memory-Projektion.
-- MCP-Tools: `search_knowledge`, `global_search_knowledge`, `get_file_context`, `find_related_files`, `get_graph_stats`, `get_graph_capabilities`, `analyze_knowledge_graph`, `list_graph_assertions`, `get_graph_insights`, `list_graph_link_candidates`, `review_graph_link_candidate`, `get_files_needing_deep_analysis`.
-- Flet-Desktop-GUI als Graph Operations Center mit Übersicht, Datenquellen/Indexierung, Graph Explorer, Qualität & Beziehungen, Graph-Analysen und System/MCP. Die GUI enthält bewusst keine inhaltliche Wissenssuche; Fragen an den Graphen werden über die MCP-Tools von externen LLMs gestellt. Unter „Datenquellen“ lassen sich indexierte Roots nach Sicherheitsabfrage gezielt aus Neo4j entfernen; Quelldateien auf dem Dateisystem werden dabei nicht gelöscht.
-- Fehler einer einzelnen Datei brechen den Gesamtimport nicht ab. Wenn der Scan auf nicht lesbare Ordner stößt, wird die Löschbereinigung vorsichtshalber ausgelassen.
-- Ein Scan kann in der GUI angefordert abgebrochen/pausiert werden. Bereits gespeicherte Dateien bleiben erhalten; ein erneuter normaler Scan desselben Roots setzt inkrementell fort.
-- `MAX_CHUNKS_PER_FILE` begrenzt, wie viele Textabschnitte pro Datei im Graph gespeichert und eingebettet werden. Standard: 500. Größere Dateien werden am Ende des Limits abgeschnitten, ohne die Originaldatei zu verändern. Die `KGFile`-Metadaten speichern Gesamtanzahl, indexierte/ausgelassene Chunks, Zeichenanzahl und `needs_deep_analysis=true`. Diese Dateien erscheinen im Dashboard als „Analyse erforderlich“, in MCP-Suchergebnissen und im Graph Explorer mit Warnhinweis und können per MCP-Tool `get_files_needing_deep_analysis` für eine spätere Vollanalyse gefunden werden. Dateien oberhalb `MAX_FILE_SIZE_MB` werden ebenfalls mit `needs_deep_analysis=true` markiert; ihr Inhalt wird nicht gelesen, sondern nur mit Metadaten gespeichert. Das MCP-Tool listet beide Fälle inklusive Status, Größe und Grund. Sie lassen sich außerdem direkt in Neo4j abfragen:
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Datenquellen &amp; Indexierung</h3>
+      <ul>
+        <li>Windows-Ordner als Datenquellen registrieren</li>
+        <li>Inkrementelle Verarbeitung neuer und geänderter Dateien</li>
+        <li>Text-Extraktion für gängige Office-, PDF-, Text-, Code- und Tabellenformate sowie optionale Bildextraktion</li>
+        <li>Konfigurierbares Chunking, Dateigrößen- und Chunk-Limits</li>
+        <li>Kontrollierter Neuaufbau oder Entfernung eines einzelnen Roots</li>
+      </ul>
+    </td>
+    <td width="50%" valign="top">
+      <h3>Knowledge Graph</h3>
+      <ul>
+        <li>Neo4j als zentrale Graphdatenbank</li>
+        <li>Quellen- und Evidenzbeziehungen zur Nachvollziehbarkeit</li>
+        <li>Lokale Embeddings über FastEmbed und ONNX Runtime</li>
+        <li>3D Graph Explorer in einem separaten WebView2-Fenster</li>
+        <li>Optionale Neo4j Graph Data Science (GDS)-Analysen</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>Qualität &amp; Graph-Intelligenz</h3>
+      <ul>
+        <li>Deterministische Graphanalysen mit Cypher</li>
+        <li>Vorschläge für mögliche Beziehungen mit nachvollziehbaren Quellen</li>
+        <li>Beziehungsvorschläge akzeptieren, zurückweisen oder zurückstellen</li>
+        <li>Optionale LLM-gestützte Entitätsextraktion</li>
+        <li>Optionale Community-Zusammenfassungen und globale Suche</li>
+      </ul>
+    </td>
+    <td valign="top">
+      <h3>CLI &amp; MCP</h3>
+      <ul>
+        <li>Hybrid-Suche aus Volltext-, Embedding- und Graphkontext</li>
+        <li>Dateikontext und verwandte Dateien abfragen</li>
+        <li>Graphstatistiken und Analysebefunde abrufen</li>
+        <li>Such- und Graphwerkzeuge über MCP externen LLM-Clients bereitstellen</li>
+        <li>Integrierter Systemtest für Verbindungen und Embeddings</li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
-```cypher
-MATCH (f:KGFile {needs_deep_analysis: true})
-RETURN f.path, f.status, f.size, f.total_chunks, f.indexed_chunks, f.omitted_chunks, f.truncation_reason
-ORDER BY CASE WHEN f.status = 'too_large' THEN 0 ELSE 1 END, f.omitted_chunks DESC
+## Architektur auf einen Blick
+
+```mermaid
+flowchart LR
+    A[Windows-Ordner] --> B[Extraktion und Chunking]
+    B --> C[Volltextindex und Embeddings]
+    C --> D[(Neo4j Knowledge Graph)]
+    D --> E[Enargeia Desktop]
+    E --> F[Graph Explorer]
+    E --> G[Qualität und Analysen]
+    D --> H[CLI]
+    D --> I[MCP-Server]
+    I --> J[Externe LLM-Clients]
 ```
-- Der Fortschritt protokolliert regelmäßig Laufzeit, Durchschnittsgeschwindigkeit und eine grobe Restzeit. Datei und Chunks werden innerhalb einer Neo4j-Transaktion gespeichert.
-- Das Programm führt keine Schreiboperationen in den gescannten Quelldateien aus.
 
-## Architektur
+Die Graphdatenbank ist das zentrale Wissens-Backend. Die Desktop-Anwendung dient der operativen Verwaltung und strukturellen Exploration. Inhaltliche Fragen lassen sich über die Suchfunktionen der CLI oder die MCP-Werkzeuge an ein verbundenes LLM geben.
 
-```text
-Windows-Dateisystem
-    ↓ Scanner + Änderungsvergleich
-Dateiformat-Extraktion
-    ↓ Chunking + optional Embeddings
-Neo4j (alle persistenten Daten)
-    ├── KGRoot / KGFolder / KGFile / KGChunk
-    ├── Neo4j-Volltext- und Vektorindizes
-    ├── optional KGEntity + belegte Beziehungen
-    ├── KGAnalysisRun / KGInsight / KGLinkCandidate
-    ├── KGAssertion / KGConsolidatedFact / KGQualityDecision / KGQualityProfile
-    ├── KGContentIdentity / KGCommunity / KGComponent + GDS-Ergebnisse
-    └── KGAnalysisHistorySummary (kompakte, kumulierte Archivstatistik)
-    └── Graphprojektionen (GDS In-Memory, temporär)
-    ↓
-Cypher + optional GDS → Hybrid Search / Graph Intelligence → Flet / CLI / MCP / LLM
-```
+## Bereiche der Desktop-Anwendung
 
-## Graph Intelligence und selbstverbessernder Graph
+| Bereich | Zweck |
+|---|---|
+| **Übersicht** | Graphbestand, Datenabdeckung und Status im Blick behalten |
+| **Datenquellen** | Roots registrieren, Scans starten und Indexierungsaktivitäten überwachen |
+| **Graph Explorer** | Knoten, Kanten, Dateien und Quellenbeziehungen strukturell untersuchen |
+| **Qualität & Beziehungen** | Evidenz und Beziehungsvorschläge prüfen und kontrolliert entscheiden |
+| **Graph-Analysen** | Struktur, Abdeckung und Beziehungen mit Cypher und optional GDS analysieren |
+| **System & MCP** | Datenbank- und Embedding-Verbindungen prüfen, Konfiguration ansehen und externe Anbindung vorbereiten |
 
-Die Funktion **Graph Intelligence** ist in der GUI verfügbar. Die strukturellen Basisanalysen brauchen kein LLM. Wenn `AUTONOMOUS_QUALITY_ENABLED=true` ist, wird zusätzlich eine begrenzte Zahl offener Beziehungskandidaten geprüft; `COMMUNITY_SUMMARIES_ENABLED=true` erstellt bei vorhandener GDS-Unterstützung außerdem Zusammenfassungen geänderter, ausreichend großer Communities.
+## Laufzeitoptionen
+
+Die Komponenten können unabhängig voneinander lokal betrieben oder mit vorhandenen Diensten verbunden werden.
+
+| Komponente | Standard bzw. integrierter Weg | Alternativen |
+|---|---|---|
+| Graphdatenbank | Lokale Neo4j-Instanz | Externe Neo4j-Instanz oder Neo4j Aura |
+| Embeddings | FastEmbed / ONNX Runtime, lokal | Vorhandenes Ollama oder OpenAI-kompatible Embedding-API |
+| LLM | Deaktiviert | Lokales/externes Ollama oder OpenAI-kompatible API |
+| Graphanalyse | Neo4j Cypher | Optional Neo4j Graph Data Science |
+| Inhaltssuche | CLI und MCP | Einbindung in externe LLM- oder Agenten-Workflows |
+
+LLM-Funktionen sind optional. Ohne externe KI lassen sich Datenquellen indexieren, der Graph verwalten und strukturbezogene Analysen durchführen. Automatisch erzeugte Entitäten, Zusammenfassungen und Beziehungsvorschläge sind Hilfsmittel und sollten anhand ihrer Quellen fachlich geprüft werden.
+
+## Erste Einrichtung unter Windows
+
+### Vorgefertigte Installation
+
+Wenn für die gewünschte Version ein Windows-Installer veröffentlicht wurde, verwende das zugehörige Installationspaket. Beim ersten Start öffnet sich der Setup-Assistent. Dort wählst du pro Komponente zwischen lokaler Bereitstellung und externem Dienst und führst anschließend den Systemtest aus.
+
+### Datenquellen einrichten
+
+1. Enargeia starten und den Setup-Assistenten abschließen.
+2. Im Bereich **Datenquellen** einen oder mehrere Ordner registrieren.
+3. Den ersten Scan starten.
+4. Warten, bis Extraktion und Indexierung abgeschlossen sind.
+5. Im Graph Explorer den Aufbau und die Quellenbeziehungen prüfen.
+6. Bei Bedarf Beziehungsvorschläge bewerten oder Graph-Analysen ausführen.
+
+Das lokale Embedding-Modell wird nicht in den Installer eingebettet. Es wird bei Bedarf heruntergeladen und im Benutzerprofil zwischengespeichert. Beim ersten Download sind Internetzugriff und ausreichend freier Speicherplatz nötig.
+
+## Suche über CLI
+
+Die CLI kann zum Beispiel nach einer ersten Indexierung über dieselbe Konfiguration wie die Desktop-Anwendung verwendet werden:
 
 ```powershell
-# Tatsächlich verfügbare Neo4j-/GDS-Funktionen anzeigen
-.\.venv\Scripts\win-kg.exe graph-capabilities
+# Verzeichnis einlesen oder aktualisieren
+.\.venv\Scripts\enargeia-cli.exe scan "D:\Wissensbasis"
 
-# Den gesamten Graphen analysieren; GDS ausführen, falls installiert und innerhalb des Limits
-.\.venv\Scripts\win-kg.exe analyze-graph
+# Hybrid-Suche durchführen
+.\.venv\Scripts\enargeia-cli.exe search "Kundenanforderungen an die Produktfreigabe"
 
-# Ohne GDS; die automatische Kandidatenprüfung kann weiterhin das konfigurierte LLM nutzen
-.\.venv\Scripts\win-kg.exe analyze-graph --no-gds
+# Mit einer Datei verbundene Dateien finden
+.\.venv\Scripts\enargeia-cli.exe related "D:\Wissensbasis\Projekt\Anforderungen.docx"
 
-# Kandidaten und deren Prüfstatus anzeigen
-.\.venv\Scripts\win-kg.exe link-candidates --status proposed
-
-# Optionaler manueller Override; die automatische Prüfung bleibt davon unabhängig
-.\.venv\Scripts\win-kg.exe review-link-candidate <KANDIDAT_ID> rejected --note "Nur zufällige gemeinsame Erwähnung"
+# Graphstatistiken und Verbindungen prüfen
+.\.venv\Scripts\enargeia-cli.exe stats
+.\.venv\Scripts\enargeia-cli.exe doctor --embedding
 ```
 
-LLM-extrahierte Quellbeziehungen werden mit `KGAssertion` und `KG_RELATED_TO` gespeichert. Eine bestätigte Aussage wird in `KGConsolidatedFact` konsolidiert und kann über eine generische `KG_ASSERTED_LINK`-Kante genutzt werden. Der Prädikatsraum bleibt flexibel; es ist kein fester Beziehungstyp pro fachlicher Aussage erforderlich. Entitäten mit exakt identischem normalisiertem Namen und Typ behalten ihre root-lokalen `KGEntity`-Knoten, erhalten aber dieselbe deterministische `canonical_entity_id` und werden über `SAME_ENTITY` verbunden. Das ist absichtlich konservativ; semantisch ähnliche Namen oder unbekannte Aliasse werden nicht automatisch blind zusammengeführt.
+Weitere Befehle umfassen unter anderem `file`, `graph-capabilities`, `analyze-graph`, `link-candidates` und `review-link-candidate`. Mit `--help` lassen sich Parameter und Optionen anzeigen. Passe Beispielpfade an deine Umgebung an.
 
-Die deterministische Analyse findet exakte Duplikate über SHA-256, Dateien ohne gespeicherte Text-Chunks, isolierte Entitäten und wiederholt gemeinsam erwähnte Paare. Solche Paare bleiben zunächst `KGLinkCandidate`-Hypothesen.
+## MCP-Integration
 
-### Autonomer Qualitätszyklus
+Enargeia stellt über einen MCP-Server Werkzeuge für Such- und Kontextzugriff, verwandte Dateien, Graphstatistiken, Analysebefunde und die Verwaltung von Beziehungsvorschlägen bereit. Der MCP-Prozess wird vom jeweiligen MCP-Client gestartet und verwendet die konfigurierte Enargeia-Laufzeit.
 
-Nach der Graphanalyse kann die Software bis zu `QUALITY_MAX_CANDIDATES_PER_RUN` offene Kandidaten in Batches (`QUALITY_BATCH_SIZE`) an das konfigurierte Chat-LLM geben. Standardmäßig sind das höchstens 20 Kandidaten in Gruppen von 5, also maximal vier LLM-Aufrufe pro Analyse. Nur Kandidaten mit noch existierenden Quell-Chunks werden geprüft. Das LLM muss eine konkrete Beziehung, Polarität, Konfidenz, optionalen Gültigkeitszeitraum und eine wörtliche Belegstelle aus genau einem Quellen-Chunk liefern.
-
-Vor der Speicherung liest Neo4j die Kandidaten und Originaltexte erneut. Die Software kontrolliert, dass die zitierte Passage wörtlich vorkommt, beide Entitätsnamen als vollständige Namens-Treffer im Text stehen, die Polarität bekannt ist, der Zeitraum aktuell ist und die Konfidenz den Schwellenwert erreicht. Fehlt eine Prüfung, wird die Relation nicht aktiviert. Unsichere Fälle bleiben vertagt oder vorgeschlagen. Strukturelle GDS-Ähnlichkeit oder wiederholte gemeinsame Erwähnung allein reicht ausdrücklich nicht als Beleg.
-
-`KGConsolidatedFact` führt assertions mit exakt gleichen kanonischen Subjekt-/Prädikat-/Objekt-Schlüsseln zusammen und speichert unterstützende Assertions, Anzahl der Beleg-Chunks sowie unabhängige Quelldateien. Positive und negative Assertions werden verglichen: Bei gleichzeitig aktiven widersprüchlichen Belegen markiert das System den Fakt als `conflict` und entfernt die aktive Kurzschlusskante, bis der Konflikt durch veränderte oder zeitlich gültige Belege geklärt ist. `KGQualityDecision` protokolliert automatisch akzeptierte, abgelehnte und vertagte Kandidaten; `KGQualityProfile` erfasst deterministische Validierungsergebnisse. Wenn nach jeweils zehn Prüfungen die Fehlerquote mindestens 20 % beträgt, wird die betreffende Konfidenzschwelle vorsichtig um 0,02 erhöht, höchstens auf 0,95. Die Schwelle wird durch diesen Mechanismus nie automatisch abgesenkt. Das System trainiert kein Modell und schreibt keine Prompts automatisch um.
-
-Automatische Entscheidungen können neu bewertet werden, wenn sich ihre Quellbasis ändert. Manuelle `accepted`-/`rejected`-Entscheidungen bleiben als bewusste Overrides erhalten und werden durch diesen Prozess nicht überschrieben.
-
-### Community Summaries und Global Search
-
-Die GDS-Community-ID ist kein laufbezogener Integer mehr: `KGCommunity.id` wird aus den sortierten IDs der Mitgliedsentitäten deterministisch abgeleitet. So kann die Zusammenfassung bei unveränderter Mitglieder- und Beleggrundlage wiederverwendet werden. Pro geeigneter Community wird ein `KGInsight` mit `kind='community_summary'` gespeichert und mit `KG_SUMMARIZES_COMMUNITY` an den Community-Knoten gehängt. Die Details umfassen den Quell-Fingerprint, Modell-/Promptversion, Mitglieder, bestätigte Relationsanzahl, Quellenpfade sowie Key Points, Caveats und mögliche Konflikte.
-
-Nur Communities mit mindestens `COMMUNITY_SUMMARY_MIN_MEMBERS` Mitgliedern und mindestens einer aktiven, bestätigten internen Beziehung werden zusammengefasst. Neu berechnet werden höchstens `COMMUNITY_SUMMARY_MAX_PER_RUN` geänderte Communities pro Analyse; mehrere Communities werden in Batches der Größe `COMMUNITY_SUMMARY_BATCH_SIZE` verarbeitet. Unveränderte Eingabefingerprints werden ohne LLM-Aufruf reaktiviert. Nicht mehr aktuelle Communities und Zusammenfassungen werden als stale markiert und von Global Search ausgeschlossen. GDS selbst kann weiterhin sehr kleine Communities erkennen, aber diese werden nicht automatisch zusammengefasst.
-
-Die Desktop-GUI bietet bewusst keine Wissenssuche und keine Chat-/RAG-Oberfläche. Inhaltliche Abfragen und die übergreifende Global Search laufen über MCP, insbesondere mit `global_search_knowledge`. Dieses MCP-Tool verbindet passende Community-Zusammenfassungen mit konkreten Hybrid-Search-Quellabschnitten, kennzeichnet offene Punkte und gibt die Originalquellen zurück. Die GUI bleibt auf Aufbau, Struktur, Abdeckung, Qualität und Verwaltung des Graphen fokussiert. Detaillierte Root-Verwaltung findet ausschließlich unter „Datenquellen“ statt; das Dashboard zeigt dafür die Anzahl der registrierten Roots.
-
-`.env`-Einstellungen: `COMMUNITY_SUMMARIES_ENABLED=true`, `COMMUNITY_SUMMARY_MIN_MEMBERS=3`, `COMMUNITY_SUMMARY_MAX_PER_RUN=8`, `COMMUNITY_SUMMARY_BATCH_SIZE=2` und `GLOBAL_SEARCH_ENABLED=true`. Bei Standardwerten erzeugt die Summary-Erstellung höchstens vier LLM-Aufrufe pro Analyse; unveränderte Communities benötigen keinen Aufruf. Das LLM für Global Search wird erst beim ausdrücklichen Aufruf dieser Suchart verwendet. Die Funktion benötigt GDS für neue Community-Erkennung, das vorhandene Chat-LLM für geänderte Zusammenfassungen sowie Antwortgenerierung und die bereits vorhandenen Quell- und Embedding-Suchfunktionen.
-
-Einstellungen in `.env`: `AUTONOMOUS_QUALITY_ENABLED=false` (Standard; zum Aktivieren explizit auf `true` setzen), `QUALITY_MAX_CANDIDATES_PER_RUN=20`, `QUALITY_BATCH_SIZE=5` und `QUALITY_MIN_CONFIDENCE=0.82`. Mit `AUTONOMOUS_QUALITY_ENABLED=false` wird nur die automatische Kandidatenprüfung abgeschaltet; die deterministische Belegprüfung beim optionalen Entity-Extraction-Aufruf bleibt erhalten. Das Review-LLM wird nur aufgerufen, wenn offene, belegbare Kandidaten gefunden werden.
-
-### Automatischer Graph-Cleanup
-
-Nach einer erfolgreichen Indexierung mit Graphänderungen und nach einer abgeschlossenen Graphanalyse wird automatisch eine Wartung ausgeführt. Unbeendete Analyseläufe, die nach 24 Stunden noch als `running` markiert sind, werden als verwaiste/abgebrochene Läufe auf `failed` gesetzt, damit auch sie in die Retention fallen. Pro Root bleiben die letzten 20 nicht laufenden `KGAnalysisRun`-Knoten erhalten; ältere Läufe werden in `KGAnalysisHistorySummary` zu kompakten Gesamtzählern (unter anderem Läufe, Findings und Kandidaten nach Status/Analyseart) verdichtet und anschließend als Detailknoten gelöscht. Die Zusammenfassung wird als einzelner Neo4j-Knoten fortgeschrieben, nicht als neuer Knoten pro Wartungslauf. Verwaiste `KGInsight`-, `KGContentIdentity`-, Extraktions-Assertion-, Community- und Komponenten-Knoten werden bereinigt. Stale GDS-Properties und semantische Ähnlichkeitskanten ohne gültige Embeddings werden ebenfalls entfernt. Der Cleanup wird bei Fehlern protokolliert und ist best-effort; ein bereits erfolgreicher Dateiimport oder Analyselauf bleibt erfolgreich.
-
-Wenn Neo4j GDS verfügbar ist, entfernt die Analyse zuerst redundante inaktive `KG_ASSERTED_LINK`-Kanten (die Review-Historie bleibt auf `KGAssertion` erhalten) und kann dann in einer temporären GDS-Projektion ausschließlich auf dem aktiven `KG_ASSERTED_LINK`-Beziehungsgraphen Community Detection (Leiden, falls verfügbar, andernfalls Louvain), Weakly Connected Components (WCC), PageRank und Node Similarity ausführen. Die separate Chunk-KNN-Projektion lädt die `embedding`-Eigenschaft ausdrücklich in den GDS-Speicher. Die WCC-Analyse erkennt getrennte Wissenskomponenten; Community-Zuordnungen, Komponenten und Zentralitätsscores werden zurück in Neo4j geschrieben. Node Similarity schlägt Entitäten mit ähnlichen Graphnachbarschaften als überprüfbare Kandidaten vor. Vor GDS prüft die Anwendung `GDS_MAX_ENTITY_NODES` (Standard: 50000); bei Überschreitung wird die GDS-Analyse übersprungen, während die Cypher-Analyse weiter nutzbar bleibt. Node Similarity besitzt zusätzlich ein niedrigeres Limit `GDS_MAX_NODE_SIMILARITY_NODES` (Standard: 15000), weil die Paarvergleichsberechnung erheblich teurer sein kann. GDS wird nicht automatisch beim normalen Datei-Scan ausgeführt.
-
-Die Feedbackschleife ist bewusst konservativ: `accepted`, `rejected` und `deferred` werden gespeichert und beeinflussen, welche Kandidaten erneut vorgeschlagen werden. Akzeptierte Beziehungen werden als generische `KG_ASSERTED_LINK`-Kanten mit `predicate`-Eigenschaft in Graphabfragen und GDS-Projektionen nutzbar; die zugehörige `KGAssertion` bewahrt Herkunft und Prüfverfahren. Quelländerungen markieren offene Kandidaten und automatisch geprüfte Entscheidungen als veraltet, wenn die betroffene Quellbasis geändert wurde. Automatisch bestätigte Fakten ohne lebende Belege werden aus dem aktiven Graphen genommen; manuelle Overrides werden nicht stillschweigend überschrieben. Die Kandidatenliste priorisiert Vorschlagsverfahren anhand ihrer Akzeptanzhistorie, wenn mindestens fünf Entscheidungen vorliegen. Davon getrennt passt `KGQualityProfile` nach jeweils zehn deterministischen Validierungen mit einer Fehlerquote von mindestens 20 % die Konfidenzschwelle um 0,02 nach oben an (bis maximal 0,95). Prompts und Modellparameter werden nicht automatisch geändert.
-
-## Unterstützte Dateien
-
-Mit den normalen Abhängigkeiten: PDF, DOCX, XLSX/XLSM, PPTX, EML, TXT, Markdown, HTML, CSV/TSV, JSON/JSONL, YAML, XML/XSD/XSL, Jupyter-Notebooks und zahlreiche Quellcode-/Konfigurationsformate (Python, JavaScript/TypeScript, Java, C#, Go, Rust, SQL, PowerShell, Batch, Shell, INI, TOML usw.).
-
-Unbekannte und binäre Dateien werden als Dateiknoten mit Metadaten erfasst, jedoch nicht als Text interpretiert. Bilder werden standardmäßig nur als Metadaten erfasst; sie werden erst mit aktivierter Docling-/OCR-Integration verarbeitet. Die alten Binärformate DOC/XLS/PPT, RTF und OpenDocument werden ebenfalls erst mit der optionalen Docling-Integration verarbeitet. Für gescannte PDFs oder Bilder kann zusätzlicher OCR-Aufwand nötig sein.
-
-## 1. Voraussetzungen
-
-- Windows 10/11 und Python 3.10 oder neuer
-- Neo4j 5.x oder neuer mit Vektorindex-Unterstützung, lokal oder Neo4j Aura
-- Ollama oder eine OpenAI-kompatible Embedding-API (für semantische Suche)
-- Optional ein OpenAI-kompatibler Chat-Completions-Endpunkt für die Extraktion semantischer Entitäten
-
-Der offizielle Neo4j Python Driver wird verwendet. Die Vektorsuche nutzt `db.index.vector.queryNodes`, das über viele Neo4j-5.x-Versionen hinweg kompatibel ist; neuere Neo4j-Versionen empfehlen für Vektorsuche inzwischen die Cypher-`SEARCH`-Syntax. Referenzen: [Neo4j Python Driver](https://neo4j.com/docs/python-manual/current/) · [Neo4j Vector Indexes](https://neo4j.com/docs/cypher-manual/current/indexes/search-indexes/vector-indexes/) · [Ollama Embeddings](https://docs.ollama.com/capabilities/embeddings).
-
-## 2. Windows-Installation
-
-Entpacke das Projekt in einen dauerhaften Ordner, öffne dort PowerShell und führe aus:
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\setup_windows.bat
-```
-
-Alternativ manuell:
-
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[mcp,test]"
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-```
-
-**Wichtig:** Wenn bereits eine `.env` existiert, behalte sie und überschreibe sie nicht. Ergänze neue Einstellungen bei Bedarf manuell aus `.env.example`. Bearbeite `.env` und setze mindestens `NEO4J_PASSWORD`. `NEO4J_URI`, `NEO4J_USERNAME` und `NEO4J_DATABASE` müssen auf deine Datenbank zeigen. Die `.env`-Datei ist durch `.gitignore` ausgeschlossen.
-
-### Grafische Oberfläche (GUI)
-
-Das Setup installiert Flet und pywebview. Starte die GUI mit Doppelklick auf `run_gui.vbs` (empfohlen) oder `run_gui.bat`. Die Haupt-GUI startet ohne dauerhaft sichtbares Terminalfenster als Desktop-Anwendung. Die animierte 3D-Graphansicht öffnet sich in einem separaten nativen Fenster über Microsoft Edge WebView2; dafür muss die WebView2 Runtime installiert sein. Das rotierende Diagnoseprotokoll liegt unter `logs/winkg-gui.log` (bis zu drei ältere 5-MB-Dateien werden aufbewahrt). Startausgaben und unerwartete Startfehler werden zusätzlich in `logs/winkg-gui-console.log` protokolliert; Hinweise des Launchers stehen in `logs/winkg-gui-startup.log`.
-
-Die GUI enthält:
-
-- **Übersicht:** Kompakte Kennzahlen zu Dateien, Textabschnitten, Entitäten und registrierten Roots, dazu Datenqualitätsindikatoren und einklappbare erweiterte Graph-Statistiken. Detailverwaltung und Löschung einzelner Roots befinden sich ausschließlich unter **Datenquellen**. Die App fragt vor der Löschung nach und entfernt nur die Graphdaten dieses Roots aus Neo4j; Quelldateien und Ordner bleiben unangetastet.
-- **Datenquellen & Indexierung:** Ordnerauswahl, inkrementeller Scan, Abbrechen/Pausieren und späteres Fortsetzen, vollständiger Neuaufbau, optionale Embeddings, Entity-Extraktion und Live-Protokoll. Ein Root-Neuaufbau verlangt eine zusätzliche Bestätigung, weil die bisherigen Graphdaten dieses Roots gelöscht werden.
-- **Graph Explorer:** Die native animierte 3D-Galaxie zeigt den vollständigen Neo4j-Datenbestand mit allen Knoten und Beziehungen. Die frühere Knotensuche wurde entfernt; Typfilter blenden Kategorien visuell ein oder aus, ohne den geladenen Gesamtbestand aus der Szene zu entfernen. Es gibt standardmäßig keine Knotenauswahl. Beim Auswählen zeigt der Inspektor Metadaten und direkte Beziehungen; „Im Graph zentrieren“, „Umfeld hervorheben“ und „Auswahl aufheben“ unterstützen das Erkunden. In der Hervorhebung werden Labels des ausgewählten Knotens und seiner direkten Nachbarn gezeigt.
-- **Qualität & Beziehungen:** Beziehungsvorschläge anhand von Verfahren, Begründung und Quellbelegen prüfen; akzeptierte, abgelehnte oder zurückgestellte Entscheidungen werden in Neo4j gespeichert.
-- **Graph-Analysen:** Analyseübersichten und wesentliche Befunde verständlich darstellen; technische JSON-Ausgaben bleiben als Diagnosebereich aufklappbar. Optionale GDS-Algorithmen sind separat zuschaltbar.
-- **System & MCP:** Neo4j-/Embedding-Test sowie Anzeige relevanter `.env`-Konfiguration ohne Passwortanzeige. Die Oberfläche zeigt die MCP-Betriebsweise an, behauptet aber keine aktive Verbindung zu einem externen MCP-Client.
-- **Navigation & Scan-Optionen:** Icon-basierte Navigation mit hervorgehobener aktiver Seite; erweiterte Scanoptionen und destruktiver Neuaufbau sind standardmäßig eingeklappt.
-
-Der Ordnerdialog greift auf das Dateisystem des Rechners zu, auf dem die GUI ausgeführt wird. Die Anwendung sollte daher lokal auf dem Windows-Rechner gestartet werden, dessen Dateien indexiert werden sollen.
-
-### Ollama für Embeddings
-
-```powershell
-ollama pull nomic-embed-text
-```
-
-Stelle sicher, dass Ollama lokal erreichbar ist. Standardmäßig ruft das Projekt `http://localhost:11434/api/embed` auf. In `.env` stehen die Parameter:
-
-```dotenv
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_BASE_URL=http://localhost:11434
-EMBEDDING_MODEL=nomic-embed-text
-EMBEDDING_BATCH_SIZE=32
-MAX_CHUNKS_PER_FILE=500
-```
-
-Für CPU-only-Systeme ist `EMBEDDING_BATCH_SIZE=32` der aktuelle Startwert. Die Batchgröße wird pro Datei in den Logs mit Dauer, Durchsatz und geschätzter Restzeit protokolliert. Größere Batches sind nicht automatisch schneller; auf der Zielhardware mit echten Dokumenten testen. Ollama wird bei Embedding-Aufrufen mit `keep_alive=30m` gebeten, das Modell zwischen den Aufrufen im Speicher zu halten.
-
-Alternativ können `EMBEDDING_PROVIDER=openai`, `EMBEDDING_BASE_URL` (Basis-URL einschließlich `/v1`, z. B. `http://localhost:1234/v1`), `EMBEDDING_MODEL` und optional `EMBEDDING_API_KEY` gesetzt werden.
-
-## 3. Verbindung testen
-
-Im Projektverzeichnis:
-
-```powershell
-.\.venv\Scripts\win-kg.exe doctor --embedding
-```
-
-Oder starte die grafische Oberfläche per Doppelklick auf `run_gui.vbs` (alternativ `run_gui.bat`).
-
-Der Befehl prüft Neo4j und optional die Embedding-API. Wenn Neo4j nicht erreichbar ist, zuerst Verbindung, URI, Datenbankname und Passwort korrigieren.
-
-## 4. Erstimport
-
-Beispiel mit einem Projektordner:
-
-```powershell
-.\.venv\Scripts\win-kg.exe scan "C:\MS_VSCode_Workspace\Fletapps_HA"
-```
-
-Oder mit der Batch-Datei:
-
-```powershell
-.\run_scan.bat "C:\MS_VSCode_Workspace\Fletapps_HA"
-```
-
-Für die erste große Verzeichnisstruktur empfehle ich, zunächst **ohne Entity-Extraktion** zu importieren. So werden Struktur, Text, Volltextsuche und Embeddings zuerst verfügbar:
-
-```powershell
-.\.venv\Scripts\win-kg.exe scan "D:\Wissensbasis"
-```
-
-Danach kannst du semantische Entitäten und Beziehungen mit einem konfigurierten Chat-Modell ergänzen:
-
-```powershell
-.\.venv\Scripts\win-kg.exe scan "D:\Wissensbasis" --force --extract-entities
-```
-
-`--force` verarbeitet alle Dateien erneut, damit die Entitäten für bereits vorhandene Chunks ebenfalls extrahiert werden. Das kann abhängig von Dateianzahl, Modell und Textmenge viele LLM-Aufrufe verursachen.
-
-
-### Scan pausieren und fortsetzen
-
-- In der GUI **„Scan abbrechen / pausieren“** drücken. Die aktuell bearbeitete Datei wird noch fertig gespeichert; danach stoppt der Scan.
-- Die bereits erfolgreich gespeicherten Dateien bleiben in Neo4j erhalten. Ein unvollständiger Lauf führt keine Bereinigung vermeintlich gelöschter Dateien durch.
-- Zum Fortsetzen denselben Root mit **„Inkrementell indexieren“** erneut starten. Bereits unveränderte Dateien werden übersprungen; fehlende oder unvollständige Dateien werden verarbeitet.
-- Der Abbruch unterbricht keine laufende externe Anfrage mitten im Aufruf. Bei Embeddings/LLM wartet die Anwendung deshalb auf das Ende bzw. Timeout des aktuellen Aufrufs und schließt anschließend die aktuelle Datei sicher ab.
-- **Achtung bei „Root neu aufbauen“:** Diese Funktion löscht den bisherigen Graphen dieses Roots am Anfang. Ein Abbruch kann daher einen nur teilweise neu aufgebauten Graphen hinterlassen. Für normale Unterbrechungen immer den inkrementellen Scan verwenden.
-
-### Sichere Scan-Defaults
-
-- Verzeichnisse wie `.git`, `.venv`, `node_modules`, `__pycache__`, `build` und `dist` werden standardmäßig ausgeschlossen. Weitere Verzeichnisnamen können über `EXTRA_EXCLUDED_DIRS` (durch Semikolon getrennt) ergänzt werden.
-- Typische Geheimnisdateien wie `.env*`, Schlüsseldateien, `credentials`- und `token`-Dateien werden standardmäßig übersprungen. Nur wenn diese Inhalte ausdrücklich indexiert werden sollen, kann `--include-sensitive` bzw. `INCLUDE_SENSITIVE_FILES=true` genutzt werden.
-- Symlinks/Junctions werden nicht verfolgt, um Endlosschleifen und unbeabsichtigte Laufwerks-/Netzwerkzugriffe zu vermeiden.
-- `--include-ignored` schließt die standardmäßig ausgeschlossenen Verzeichnisnamen mit ein. Nicht wahllos auf `C:\` ohne gezielte Excludes anwenden.
-- Bei Dateien oberhalb `MAX_FILE_SIZE_MB` werden standardmäßig nur Metadaten gespeichert und `needs_deep_analysis=true` gesetzt. Sie werden im Dashboard und per MCP-Tool als analysebedürftig aufgeführt. Den Grenzwert nur erhöhen, wenn RAM und Laufzeit das erlauben.
-- Bei Dateien mit mehr als `MAX_CHUNKS_PER_FILE` werden nur die ersten N Chunks indexiert. Der Eintrag wird ebenfalls mit `needs_deep_analysis=true` markiert; die vollständige Quelldatei bleibt unverändert.
-- Wenn der Chunk-Limit-Wert gesenkt wird, erkennt der nächste normale Scan bereits importierte Dateien, deren gespeicherte Chunks über dem neuen Limit liegen, und verarbeitet sie erneut. Für die sichere Begrenzung bereits vorhandener Einträge kann zusätzlich `--force` verwendet werden.
-
-Wenn ein Dateizugriff fehlschlägt, werden Scanfehler protokolliert. Die Bereinigung alter Knoten wird für einen Lauf mit Traversierungsfehlern ausgelassen, damit nicht versehentlich Daten entfernt werden.
-
-## 5. Suche und Abfragen
-
-```powershell
-# Hybrid Search mit Quellenbelegen
-.\.venv\Scripts\win-kg.exe search "Welche Module schreiben in die SQLite-Datenbank?" --limit 8
-
-# Suche nur in einem Root
-.\.venv\Scripts\win-kg.exe search "Fakturasperre Retourenauftrag" --root "D:\Wissensbasis"
-
-# JSON-Ausgabe für Skripte
-.\.venv\Scripts\win-kg.exe search "Neo4j MCP" --json
-
-# Einzeldatei und gespeicherte Chunks
-.\.venv\Scripts\win-kg.exe file "src\main.py" --root "C:\MS_VSCode_Workspace\Fletapps_HA"
-
-# Über gemeinsame Entitäten verbundene Dateien (braucht Entity-Extraktion)
-.\.venv\Scripts\win-kg.exe related "README.md" --root "D:\Wissensbasis"
-
-# Graph-Zähler
-.\.venv\Scripts\win-kg.exe stats
-```
-
-Die normale Suche kombiniert semantische Ähnlichkeit und exakte Texttreffer. Jeder Treffer enthält Pfad, Ausschnitt und – soweit von der Extraktion ermittelt – Seite/Abschnitt. Eine Dateistruktur alleine erzeugt noch keine semantischen Beziehungen; dafür muss `--extract-entities` aktiviert sein. Bei Verwendung eines Cloud-LLM-Endpunkts werden die jeweiligen Textabschnitte an diesen Anbieter übertragen; für vollständig lokale Verarbeitung muss der konfigurierte Embedding- und Chat-Endpunkt lokal laufen.
-
-## 6. MCP-Server für LLM-Agenten
-
-Das Paket installiert den MCP-SDK mit. Starte im Projektverzeichnis testweise:
+Der Server kann aus der eingerichteten Entwicklungsumgebung über Python gestartet werden:
 
 ```powershell
 .\.venv\Scripts\python.exe -m winkg.mcp_server
 ```
 
-Der Server verwendet **stdio** (kein offener Netzwerk-Port). Der MCP-Client muss auf das Projektverzeichnis bzw. die richtige Python-Umgebung zeigen. Allgemeines Beispiel für eine MCP-Client-Konfiguration:
+Der MCP-Client muss den Befehl mit dem passenden Python-Interpreter und dem Argument `-m winkg.mcp_server` starten können. Die konkreten Einstellungen unterscheiden sich je nach MCP-Host.
 
-```json
-{
-  "mcpServers": {
-    "windows-knowledge-graph": {
-      "command": "C:\\Pfad\\neo4j_windows_knowledge_graph\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "winkg.mcp_server"]
-    }
-  }
-}
-```
+## Datenschutz und Speicherorte
 
-Folgende Tools werden registriert:
+- Bei lokaler Neo4j-Datenbank, lokalen Embeddings und deaktiviertem externem LLM können Dokumentinhalte vollständig lokal verarbeitet werden.
+- Bei Nutzung externer Datenbanken, Embedding-APIs oder LLMs werden die jeweils übertragenen Daten durch den betreffenden Dienst verarbeitet. Prüfe dessen Datenschutz- und Nutzungsbedingungen.
+- Enargeia verändert die Quelldateien nicht; es speichert extrahierte Inhalte und Graphdaten separat.
+- Scanne nur Verzeichnisse, für die du die nötigen Berechtigungen besitzt, und prüfe vorab, ob sie sensible Informationen enthalten.
 
-- `search_knowledge(query, limit, root?)` – hybride Quellensuche
-- `global_search_knowledge(query, limit, root?)` – globale Suche über konkrete Treffer und Community-Zusammenfassungen
-- `get_file_context(path, root?)` – Dateimetadaten und gespeicherte Textabschnitte
-- `find_related_files(path, limit, root?)` – strukturell bzw. semantisch verbundene Dateien
-- `get_graph_stats(root?)` und `get_graph_capabilities()` – Bestand und tatsächlich verfügbare Neo4j-/GDS-Funktionen
-- `analyze_knowledge_graph(...)` – Graphanalyse mit optionalem GDS
-- `list_graph_link_candidates(status?, limit, include_stale?)` und `review_graph_link_candidate(candidate_id, decision, note?)` – Kandidaten prüfen und entscheiden
-- `list_graph_assertions(status?, predicate?, ...)` – quellengebundene Aussagen auflisten
-- `get_graph_insights(limit, run_id?)` – gespeicherte Analysebefunde und Community-Insights
-- `get_files_needing_deep_analysis(limit, root?)` – Dateien mit ausgelassenem bzw. begrenztem Inhalt
+Im installierten Windows-Betrieb werden Konfiguration, Modellcache, Laufzeitdaten und Logs standardmäßig im Benutzerprofil gespeichert:
 
-Der MCP-Server lädt seine Einstellungen ausschließlich aus der `.env` im Projektordner. Stelle sicher, dass der Server mit der Python-Umgebung dieses Projekts gestartet wird; Windows-Umgebungsvariablen sollen die projektlokale Konfiguration nicht ersetzen.
+| Inhalt | Speicherort |
+|---|---|
+| Anwendungsdaten | `%LOCALAPPDATA%\Enargeia` |
+| Konfiguration | `%LOCALAPPDATA%\Enargeia\config\settings.env` |
+| Lokale Modelle | `%LOCALAPPDATA%\Enargeia\models` |
+| Logs | `%LOCALAPPDATA%\Enargeia\logs` |
 
-## 7. Optional: semantische Entity-Extraktion
+Diese Verzeichnisse liegen außerhalb des Programmordners und sind daher von den eigentlichen Build-Artefakten getrennt. Bei Neuinstallation oder Deinstallation sollten Datenordner nur bewusst und nach einer Sicherung entfernt werden.
 
-In `.env` konfigurieren:
+## Systemvoraussetzungen
 
-```dotenv
-LLM_BASE_URL=http://localhost:11434/v1
-LLM_MODEL=qwen2.5:7b
-LLM_API_KEY=ollama
-ENTITY_EXTRACTION_ENABLED=false
-```
+### Laufende Anwendung
 
-Die Chat-Completions-URL muss unter `{LLM_BASE_URL}/chat/completions` erreichbar sein. Die Entity-Extraktion selbst bleibt standardmäßig deaktiviert. Mit `--extract-entities` werden Entitäten und ihre quellenbelegten Beziehungen ermittelt. Nur Relationen, deren wörtliche Evidenz, Entitätsnamen, Polarität, Gültigkeitszeitraum und Konfidenz die lokalen Prüfungen bestehen, werden als Assertion übernommen; alle anderen bleiben vorgeschlagen. Daneben kann die Graphanalyse vorhandene Kandidaten in kleinen Batches automatisch prüfen. Jede automatische Annahme wird vor dem Speichern anhand aktueller Neo4j-Quelldaten erneut geprüft. Bei kritischen Anwendungen bleiben Stichproben und ein manueller Override sinnvoll.
+- Windows 10 oder neuer, 64 Bit
+- Freier Speicherplatz für Datenbank, Graphindex und bei lokaler Embedding-Nutzung das Modell
+- Internetzugriff für die erstmalige Bereitstellung noch nicht vorhandener Laufzeitkomponenten oder Modelle
+- Leseberechtigung für die gewählten Quelldaten
 
-## 8. Docling optional aktivieren
+### Entwicklung und Windows-Build
 
-Die leichte Standardinstallation deckt bereits viele gebräuchliche Dateitypen ab. Für zusätzliche Office-/OpenDocument-Formate oder bessere Layoutbehandlung kann Docling installiert werden:
+- Windows x64
+- Python 3.10 bis 3.13 (64 Bit)
+- Inno Setup, wenn zusätzlich zum PyInstaller-Programmordner ein `Setup.exe` erzeugt werden soll
+- Für die 3D-Ansicht eine funktionierende WebView2-Umgebung
+
+## Entwicklung aus dem Quellcode
+
+Die Anwendung kann direkt aus der Python-Umgebung gestartet werden. Normale Änderungen an Python-Code oder UI erfordern keinen Installer-Build.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[docling,mcp]"
+# Entwicklungsumgebung mit GUI, lokalen Embeddings, MCP, Tests und Packaging einrichten
+.\setup_windows.bat
+
+# Desktop-GUI starten
+.\run_gui.bat
 ```
 
-Anschließend in `.env` `USE_DOCLING=true` setzen. Je nach Dokumenttyp können Download, Modellinitialisierung und CPU-/RAM-Aufwand höher sein. Die Dateien werden lokal verarbeitet; überprüfe die Datenschutzanforderungen deiner Umgebung.
+Die Entwicklungsinstallation legt eine lokale `.venv` an. Der Setup-Assistent erscheint beim ersten Start, wenn noch keine Konfiguration vorhanden ist.
 
-## 9. Datenmodell in Neo4j
-
-Labels:
-
-- `KGRoot`: ein importiertes Quellverzeichnis
-- `KGFolder`: Ordner in der Verzeichnisstruktur
-- `KGFile`: Datei-Metadaten und Indexierungsstatus
-- `KGChunk`: Textabschnitt mit optionalem Vektor und Quellenposition
-- `KGEntity`: optional extrahierte Entität
-
-Kanten:
-
-- `KG_CONTAINS`: Root/Ordner enthält Ordner oder Datei
-- `KG_HAS_CHUNK`: Datei hat Textabschnitt
-- `KG_MENTIONS`: Textabschnitt erwähnt Entität
-- `KG_RELATED_TO`: aus einem Chunk extrahierte Beziehung samt Beleg, Konfidenz, Polarität und Status
-- `KG_ASSERTED_LINK`: generische aktive Beziehung mit freiem `predicate`-Wert; nur bestätigte, konsolidierte Beziehungen werden traversiert und für Entitäts-GDS-Analysen projiziert
-- `SAME_ENTITY`: Verbindung root-lokaler Entitätsknoten mit exakt gleichem normalisiertem Namen und Typ
-- `KGConsolidatedFact`: sammelt Assertions für dieselbe kanonische Subjekt-/Prädikat-/Objekt-Aussage, einschließlich unabhängiger Belegquellen und Konfliktstatus
-- `KGQualityDecision` / `KGQualityProfile`: Entscheidungen zur autonomen Kandidatenprüfung und kompakte Kennzahlen der deterministischen Validierung
-- `KGAssertion`: quellengebundene Aussage mit offenem Prädikat, Status, Methode und Beleg-Chunks
-- `KGExtractionCache`: erfolgreiche LLM-Extraktion, keyed by Content-Hash, Modell-Endpunkt und Prompt-Version
-- `KGComponent`: temporäre GDS-WCC-Ergebnisse als nachvollziehbare Komponentenknoten; bei Änderungen als veraltet markiert
-
-Die verwendeten Labels und Beziehungstypen sind bewusst mit `KG` präfixiert, damit vorhandene Graphdaten nicht mit generischen Labels wie `File` oder `Entity` kollidieren.
-
-## 10. Aktualisieren, Neuaufbau und Troubleshooting
-
-- Normaler Scan ist inkrementell: `win-kg scan "D:\Wissensbasis"`.
-- `--force` extrahiert vorhandene Dateien erneut, überschreibt ihre Chunks und kann für Entity-Extraktion gebraucht werden.
-- `--rebuild` löscht **nur den Graphen dieses Roots** und importiert ihn neu. Vorher sicherstellen, dass die `root`-Pfadangabe exakt dem bisherigen Root entspricht.
-- In derselben Neo4j-Datenbank müssen alle Roots dasselbe Embedding-Modell verwenden. Ein Modellwechsel erzeugt einen Dimensions-/Vektorraummix und wird erkannt. Für einen bewussten Wechsel `--rebuild` verwenden und zuerst andere Roots mit abweichendem Modell entfernen oder eine getrennte Datenbank nutzen.
-- `--no-embeddings` legt nur Volltext und Graph ab; die semantische Suche ist dann aus. Der Root ist damit als `none` registriert; zum späteren Wechsel auf Vektoren `--rebuild` mit aktivierten Embeddings ausführen.
-- Wenn Neo4j einen Vektorindex nicht erstellen kann, zuerst die Neo4j-Version und die Logs kontrollieren. Volltextindexierung bleibt getrennt von der Vektorsuche.
-- `status=embedding_missing` bedeutet: Inhalt wurde gerettet und kann per Volltext gefunden werden, aber die Embedding-API oder der Vektorindex ist fehlgeschlagen. Ein weiterer normaler Scan versucht diese Dateien erneut.
-- Große, unlesbare oder nicht unterstützte Dateien bleiben als Metadatenknoten vorhanden, sofern der Scan sie sehen kann.
-
-## 11. Tests
+### Tests ausführen
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Die Tests decken Chunking, Inhaltsextraktion, Graph-Cleanup, Quellbeleg-Validierung, adaptive Schwellen und die Batch-Steuerung des autonomen Qualitätszyklus ab. Die Testsuite führt keine echten Neo4j-/LLM-Integrationstests aus; diese benötigen laufende Dienste und müssen separat ausgeführt werden.
+### Windows-Release bauen
 
-## Desktop-GUI (Version 1.0.0)
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\packaging\windows\build_windows.ps1
+```
 
-Die 3D-Szene wird lokal mit WebGL gerendert und benötigt weder einen CDN-Zugriff noch zusätzliche LLM-Aufrufe. Unter Windows verwendet das separate Graphfenster pywebview mit der Microsoft Edge WebView2 Runtime, da Flets eingebautes WebView Windows nicht unterstützt.
+Das Build-Skript nutzt eine getrennte Umgebung `.venv-packaging`, installiert festgelegte Laufzeitabhängigkeiten, prüft Flet-/FastEmbed-/ONNX-Voraussetzungen und kontrolliert, ob die benötigten nativen ONNX-Dateien im PyInstaller-Bundle enthalten sind. Das Modell selbst wird nicht mitgepackt. Ohne installiertes Inno Setup werden die PyInstaller-Dateien in `dist` erstellt; der Installer wird erst mit `ISCC.exe` generiert.
 
-Die Desktop-GUI ist als **Graph Operations Center** ausgerichtet. Sie ist bewusst keine Chat- oder Wissenssuche-Oberfläche: Inhaltliche Fragen stellt man externen LLMs über die MCP-Werkzeuge. Die GUI konzentriert sich auf Graph-Aufbau, Indexierung, strukturelle Inspektion, Datenqualität und Analyse.
+### Relevante Projektstruktur
 
-### UI-Bereiche
+```text
+assets/branding/                 Corporate-Design-Quellen und Installer-Grafiken
+packaging/windows/               PyInstaller-Einstiege, Build-Skript und Inno Setup
+src/winkg/                       Anwendung, Indexierung, Graphlogik, CLI und MCP
+src/winkg/ui/                    UI-Komponenten, Theme und 3D-Graph-Oberfläche
+tests/                           Funktions- und Regressionstests
+pyproject.toml                   Version, Abhängigkeiten und Entry Points
+```
 
-- **Übersicht:** kompakte Kennzahlen, Datenqualitätsindikatoren und aufklappbare erweiterte Graph-Statistiken. Doppelte Navigationskarten und die Root-Registry wurden entfernt; Funktionen bleiben über die feste Seitenleiste und den Bereich „Datenquellen“ erreichbar.
-- **Datenquellen:** inkrementelle Indexierung und Live-Protokoll in einem Arbeitsbereich; fortgeschrittene Optionen und destruktiver Neuaufbau sind getrennt.
-- **Graph Explorer:** animierte, echte 3D-Graphansicht in einem nativen WebView2-Fenster. Beim Öffnen lädt sie alle Knoten und alle Beziehungen der konfigurierten Neo4j-Datenbank als vollständige Galaxie, nicht nur die Nachbarschaft einer ausgewählten Datei. Die frühere Knotensuche wurde entfernt; Typfilter blenden Kategorien visuell ein oder aus. Mausziehen dreht die Kamera, Rechtsziehen verschiebt, Mausrad zoomt; Knoten zeigen ihre Labels und direkten Beziehungen. „Umfeld hervorheben“ fokussiert visuell auf Nachbarn, ohne neue Datenbankabfragen auszuführen.
-- **Qualität & Beziehungen:** Beziehungskandidaten als strukturierte Richtungskarten mit Methode, Score, Evidenzanzahl, historischer Annahmequote und expliziten Review-Aktionen.
-- **Graph-Analysen:** lesbare Statusmetriken und Befunde; vollständige JSON-Ausgabe bleibt nur als technische Detailansicht verfügbar.
-- **System & MCP:** Verbindungsprüfung, Konfigurationswerte und klare Abgrenzung des stdio-MCP-Zugriffs für externe Clients.
+## Enargeia Corporate Design
 
-Das Design nutzt ein einheitliches dunkles Farbsystem, wiederverwendbare Oberflächenkomponenten, semantische Statusfarben und eine feste Desktop-Navigation. Die fachliche Wahrheit bleibt in Neo4j und den zugehörigen Quellenbelegen; räumliche Positionen und Animationen der Visualisierung sind reine Anzeigeelemente.
+Die Marke visualisiert Unternehmenswissen als Netzwerk: Orbitlinien stehen für Beziehungen, Knoten für Informationen und der leuchtende Kern für Erkenntnis. Der Claim lautet **WISSEN VERBINDET**.
 
-Die 3D-Galaxie verwendet einen lokalen WebGL-Renderer mit 3D-Kamera, animierter Kraftsimulation, Sternenhintergrund und bewegten Partikeln entlang der Kanten. Beim Öffnen lädt der Viewer über `Neo4jStore.graph_snapshot()` sämtliche Knoten und Beziehungen ohne Root- oder Nachbarschaftsbegrenzung. Übertragen werden nur leichte Anzeige-Metadaten, keine Chunktexte und keine Embedding-Vektoren. Der Renderer nutzt eine räumliche Hash-Zelle für lokale Abstoßung, eine Adjazenzliste für Kantenkräfte und begrenzt HTML-Labels auf die wichtigsten Knoten, damit die komplette Galaxie performant bleibt. Die Ansicht läuft in einem separaten nativen pywebview-/WebView2-Fenster und enthält keine CDN-Abhängigkeiten. Die Positionen der Knoten werden lokal berechnet und nicht nach Neo4j zurückgeschrieben.
+### Farbpalette
 
-### Interaktion mit der 3D-Galaxie
+| Funktion | Farbe | HEX |
+|---|---|---|
+| Primärer Hintergrund | Deep Navy | `#071326` |
+| Sekundäre Flächen | Navy Surface | `#0B1C36` |
+| Primäraktionen und Fokus | Electric Blue | `#1677FF` |
+| Graph-Knoten und Verbindungen | Graph Cyan | `#11C5E8` |
+| Sekundäre Graphakzente | Galaxy Violet | `#8057F5` |
+| Primärtext auf dunklen Flächen | Off White | `#F4F8FF` |
+| Sekundärtext | Muted Blue Grey | `#91A9C8` |
+| Erfolgsmeldungen | Success Green | `#31D27C` |
 
-Beim Öffnen ist kein Knoten ausgewählt. Klicke einen Knoten an, um Metadaten und direkte Beziehungen im Inspektor zu sehen. Die Kamera lässt sich durch Ziehen drehen, mit der rechten Maustaste verschieben und über das Mausrad zoomen. **„Im Graph zentrieren“** fokussiert den ausgewählten Knoten; **„Umfeld hervorheben“** schaltet die visuelle Hervorhebung seiner direkten Nachbarn um. In diesem Modus werden Labels für den ausgewählten Knoten und seine direkten Nachbarn gezeigt. Über **„Auswahl aufheben“** oder einen Klick auf die leere Szene lässt sich die Auswahl wieder entfernen, ohne die Gesamtsicht auf den Datenbestand zu verlieren. Die Typfilter steuern die Sichtbarkeit nach Knotentypen, ohne den vollständigen Bestand aus der geladenen Szene zu löschen.
+**Typografie:** Inter als Primärschrift; unter Windows Segoe UI, danach Arial/sans-serif als Fallback.
 
-### Übersicht und Seitenlayout
+Die editierbaren SVG-Originale, PNG-Exporte, Windows-Icons, Installer-Banner, Splash- und Abschlussgrafiken liegen unter [`assets/branding/Enargeia_Corporate_Design`](assets/branding/Enargeia_Corporate_Design). Die vollständigen Markenregeln stehen im [Corporate Design Guide](assets/branding/Enargeia_Corporate_Design/brand/Corporate_Design_Guide.md).
 
-Die Übersicht bündelt Kernkennzahlen, Datenqualitätsindikatoren und Betriebsstatus. Der Schalter **„Erweiterte Statistik anzeigen“** befindet sich oben in der Zeile **GRAPH AT A GLANCE** und blendet zusätzliche Kennzahlen zu Ordnern, belegten Aussagen, Communities, Komponenten, Analysebefunden und GDS-Ähnlichkeitskanten ein. Die Übersicht erzeugt keine zusätzliche eigenständige Scrollfläche. Längere Arbeitsbereiche, insbesondere **Datenquellen**, verwalten ihren eigenen Scrollbereich; die beiden oberen Karten **„Datenquelle konfigurieren“** und **„Laufaktivität“** haben eine gleiche, begrenzte Höhe.
+### Grundregeln
 
-Das Release 1.0.0 konsolidiert das Desktop-Layout und die Seitennavigation. Wiederholte Navigations- und Statuskarten wurden entfernt, Root-Verwaltung ist unter **„Datenquellen“** gebündelt, und die Anwendung verwendet einen gemeinsamen App-Header statt wiederholter Titelbanner.
+- Logos nicht stauchen oder drehen und ihre Farben nicht verändern.
+- Auf dunklen Flächen die Variante für dunkle Hintergründe, auf hellen Flächen die passende helle Variante verwenden.
+- Um das Zeichen ausreichend Freiraum lassen und den Kontrast der Schrift sicherstellen.
+
+## Fehlerbehebung
+
+### Das lokale Embedding-Modell lässt sich nicht initialisieren
+
+1. Prüfe, ob der erste Modell-Download abgeschlossen ist und Internetzugriff besteht.
+2. Prüfe Schreibrechte und freien Speicherplatz unter `%LOCALAPPDATA%\Enargeia\models`.
+3. Öffne **System & MCP** und führe den Systemtest erneut aus.
+4. Wenn der Fehler bleibt, sichere die zum Fehlerzeitpunkt gehörenden Logs aus `%LOCALAPPDATA%\Enargeia\logs`.
+
+### Neo4j ist nicht erreichbar
+
+- Bei einer lokalen Bereitstellung auf die abgeschlossene Initialisierung warten und anschließend den Systemtest ausführen.
+- Bei einer externen Verbindung URI, Datenbanknamen und Zugangsdaten prüfen.
+- Sicherstellen, dass die ausgewählte Datenbank vom Rechner erreichbar ist.
+
+### Wenige oder keine Ergebnisse
+
+- Prüfen, ob die betreffende Datenquelle erfolgreich gescannt wurde.
+- Dateiformat und Leseberechtigungen kontrollieren.
+- Nach Änderungen in den Quelldateien einen weiteren Scan ausführen.
+- Bei der Suche über CLI oder MCP sowohl Fachbegriffe als auch alternative Formulierungen testen.
+
+## Projektstatus und Lizenz
+
+Die Projektversion ist **1.2.0**. Sie wird in `pyproject.toml`, `src/winkg/__init__.py` und der Windows-Installer-Konfiguration geführt.

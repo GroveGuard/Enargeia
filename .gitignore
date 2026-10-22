@@ -1,6 +1,17 @@
 .env
 .venv/
+.vscode
 __pycache__/
 *.py[cod]
 .pytest_cache/
 *.log
+/build/
+/dist/
+*.egg-info/
+*.spec
+/packaging/windows/output/
+/packaging/windows/runtime/
+
+.venv-packaging/
+
+/packaging/windows/redist/

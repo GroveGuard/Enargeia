@@ -17,16 +17,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .config import PROJECT_ROOT, get_settings
+from .config import LOG_DIR, PROJECT_ROOT, get_settings
 
 LOG = logging.getLogger("winkg.graph3d")
 HTML_PATH = Path(__file__).parent / "ui" / "graph3d.html"
 
 
 _NODE_PALETTE = {
-    "root": "#55e2c4", "folder": "#3ed7be", "file": "#38dfc2",
-    "chunk": "#58aaff", "entity": "#ffb75f", "knowledge": "#b99aff",
-    "system": "#f28cd9", "other": "#8ca6bf",
+    "root": "#11C5E8", "folder": "#1677FF", "file": "#11C5E8",
+    "chunk": "#1677FF", "entity": "#11C5E8", "knowledge": "#8057F5",
+    "system": "#91A9C8", "other": "#91A9C8",
 }
 
 
@@ -249,7 +249,7 @@ class GraphWindowApi:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Neo4j Company Knowledge Graph 3D viewer")
+    parser = argparse.ArgumentParser(description="Enargeia 3D graph viewer")
     parser.add_argument("--payload", required=True, help="Temporary JSON graph payload shared with the parent GUI")
     args = parser.parse_args()
     payload_path = Path(args.payload).resolve()
@@ -258,10 +258,10 @@ def main() -> int:
     if not read_graph_payload(payload_path):
         raise ValueError(f"3D-Graphdaten konnten nicht gelesen werden: {payload_path}")
 
-    log_dir = PROJECT_ROOT / "logs"
+    log_dir = LOG_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
-        filename=log_dir / "winkg-graph3d.log",
+        filename=log_dir / "enargeia-graph3d.log",
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         encoding="utf-8",
@@ -272,13 +272,13 @@ def main() -> int:
 
         api = GraphWindowApi(payload_path)
         webview.create_window(
-            "Company Knowledge Graph · 3D Explorer",
+            "Enargeia · 3D Explorer",
             html=HTML_PATH.read_text(encoding="utf-8"),
             js_api=api,
             width=1600,
             height=980,
             min_size=(1050, 700),
-            background_color="#050b14",
+            background_color="#071326",
             text_select=True,
         )
         webview.start(gui="edgechromium" if os.name == "nt" else None, debug=False)
@@ -292,8 +292,8 @@ def main() -> int:
                     None,
                     "Die 3D-Graphansicht konnte nicht geöffnet werden.\n\n"
                     "Bitte prüfe, ob pywebview und die Microsoft Edge WebView2 Runtime installiert sind.\n"
-                    "Details stehen in logs\\winkg-graph3d.log.\n\n" + str(exc),
-                    "Company Knowledge Graph – 3D-Ansicht",
+                    f"Details stehen in {LOG_DIR / 'enargeia-graph3d.log'}.\n\n" + str(exc),
+                    "Enargeia – 3D-Ansicht",
                     0x10,
                 )
             except Exception:

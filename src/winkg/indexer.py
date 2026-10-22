@@ -6,7 +6,7 @@ import uuid
 import time
 from threading import Event
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .chunking import chunk_text_limited, stable_id
 from .config import Settings
@@ -20,10 +20,15 @@ log = logging.getLogger(__name__)
 
 
 class DirectoryIndexer:
-    def __init__(self, settings: Settings, store: Neo4jStore | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        store: Neo4jStore | None = None,
+        embedding_progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ):
         self.settings = settings
         self.store = store or Neo4jStore(settings)
-        self.embedding_client = EmbeddingClient(settings)
+        self.embedding_client = EmbeddingClient(settings, progress_callback=embedding_progress_callback)
         self.entity_extractor = EntityExtractor(settings)
         self._vector_index_dimensions: set[int] = set()
 
@@ -247,7 +252,7 @@ class DirectoryIndexer:
                                 metadata["status"] = "embedding_missing"
                                 metadata["error"] = str(exc)[:1000]
                                 stats["embedding_missing"] += 1
-                                log.warning("Embeddings nicht verfügbar für %s: %s; Volltext bleibt indexiert.", candidate.relative_path, exc)
+                                log.warning("Embeddings nicht verfügbar für %s: %s; Volltext bleibt indexiert.", candidate.relative_path, exc, exc_info=True)
                         elif text_chunks and (no_embeddings or not self.embedding_client.enabled):
                             metadata["status"] = "content_only"
 

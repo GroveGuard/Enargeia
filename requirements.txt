@@ -1,13 +1,7 @@
-neo4j>=5.20,<7
-requests>=2.31
-python-dotenv>=1.0
-charset-normalizer>=3.3
-pymupdf>=1.24
-python-docx>=1.1
-openpyxl>=3.1
-python-pptx>=0.6.23
-beautifulsoup4>=4.12
-PyYAML>=6.0
-mcp>=1.9,<2
-flet>=1.0.4
-pywebview>=5.4
+# Core runtime dependencies are maintained in pyproject.toml.
+# Development setup: powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 -Command setup
+# GUI: pip install -e ".[gui]"
+# Local embeddings: pip install -e ".[local-embeddings]"
+# MCP integration: pip install -e ".[mcp]"
+# Optional document-layout extraction: pip install -e ".[docling]"
+# Developer tests: pip install -e ".[test]"

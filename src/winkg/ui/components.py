@@ -47,7 +47,7 @@ def status_pill(text: str, color: str = ACCENT, *, icon: str | None = None) -> f
     controls.append(ft.Text(text, size=10, weight=ft.FontWeight.W_600, color=color))
     return ft.Container(
         content=ft.Row(controls=controls, spacing=7, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        bgcolor="#142D32" if color == ACCENT else "#182538",
+        bgcolor="#102B46" if color == ACCENT else "#0B1C36",
         border=ft.Border.all(1, color),
         border_radius=20,
         padding=ft.Padding.symmetric(horizontal=10, vertical=6),
@@ -60,7 +60,7 @@ def icon_tile(icon: str, color: str = ACCENT, *, size: int = 38) -> ft.Container
         width=size,
         height=size,
         alignment=ft.Alignment(0, 0),
-        bgcolor="#15383A" if color == ACCENT else "#1B2C40",
+        bgcolor="#102B46" if color == ACCENT else "#15345A",
         border=ft.Border.all(1, color),
         border_radius=11,
     )

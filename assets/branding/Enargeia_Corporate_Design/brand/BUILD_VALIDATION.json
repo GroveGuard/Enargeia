@@ -1,0 +1,40 @@
+{
+  "app_icon": "ICO",
+  "sidebar_size": [
+    164,
+    314
+  ],
+  "header_bmp_size": [
+    493,
+    58
+  ],
+  "splash_size": [
+    1200,
+    675
+  ],
+  "welcome_size": [
+    1920,
+    1080
+  ],
+  "completion_size": [
+    600,
+    600
+  ],
+  "file_count": 46,
+  "installer_assets_integrated": [
+    "SetupIconFile: Enargeia.ico",
+    "WizardImageFile: Enargeia_Installer_Sidebar.bmp",
+    "WizardSmallImageFile: Enargeia_Installer_Small_Icon.bmp",
+    "Splash page: Enargeia_Splash_Screen.bmp",
+    "Finished page: Enargeia_Setup_Complete.bmp"
+  ],
+  "runtime_integrations": [
+    "Application and graph companion executable icons: Enargeia.ico",
+    "Main GUI sidebar logo: Enargeia_Logo_Dark_Background.png",
+    "Setup wizard and bootstrap header: Enargeia_Installer_Header.png",
+    "Bootstrap background: Enargeia_Welcome_Background.png",
+    "Embedding progress image: Enargeia_Loading_Indicator.png",
+    "3D graph header mark: Enargeia_Symbol_512.png",
+    "Inno Setup: Sidebar, small icon, splash and completion BMP files"
+  ]
+}

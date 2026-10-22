@@ -18,7 +18,8 @@ from typing import Any, Callable
 import flet as ft
 
 from . import __version__
-from .config import PROJECT_ROOT, get_settings
+from .branding import image_as_base64
+from .config import IS_FROZEN, LOG_DIR, PROJECT_ROOT, get_settings
 from .embeddings import EmbeddingClient
 from .graph_intelligence import GraphIntelligence
 from .indexer import DirectoryIndexer
@@ -61,9 +62,9 @@ def _safe_icon(name: str) -> Any:
 
 def _configure_logging() -> Path:
     """Write application and scan diagnostics to a rotating project-local log."""
-    log_dir = PROJECT_ROOT / "logs"
+    log_dir = LOG_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "winkg-gui.log"
+    log_path = log_dir / "enargeia-gui.log"
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     # Avoid duplicate handlers if main() is invoked more than once in a process.
@@ -163,7 +164,10 @@ def _run_delete_root(root_path: str) -> dict[str, Any]:
         store.close()
 
 
-def _run_doctor(test_embeddings: bool) -> dict[str, Any]:
+def _run_doctor(
+    test_embeddings: bool,
+    embedding_progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     settings = get_settings()
     settings.validate_neo4j()
     store = Neo4jStore(settings)
@@ -177,13 +181,19 @@ def _run_doctor(test_embeddings: bool) -> dict[str, Any]:
         "database": settings.neo4j_database,
         "stats": stats,
     }
-    if test_embeddings:
-        client = EmbeddingClient(settings)
+    if test_embeddings and settings.embedding_provider != "none":
+        client = EmbeddingClient(settings, progress_callback=embedding_progress_callback)
         vector = client.embed_one("Verbindungstest für den Knowledge Graph")
         result["embedding"] = {
             "status": "OK",
             "model": client.signature,
             "dimensions": len(vector),
+        }
+    elif test_embeddings:
+        result["embedding"] = {
+            "status": "DEAKTIVIERT",
+            "model": "none",
+            "message": "Semantische Vektorsuche ist deaktiviert; Volltext- und Graphfunktionen bleiben verfügbar.",
         }
     return result
 
@@ -214,7 +224,7 @@ def _run_graph_analysis(run_gds: bool) -> dict[str, Any]:
     settings.validate_neo4j()
     store = Neo4jStore(settings)
     try:
-        return GraphIntelligence(store).analyze(run_gds=run_gds)
+        return GraphIntelligence(store).analyze(run_gds=(run_gds and not (settings.neo4j_mode == "local" and not settings.gds_enabled)))
     finally:
         store.close()
 
@@ -259,6 +269,20 @@ def main(page: ft.Page) -> None:
 
     scan_log_queue: queue.Queue[str] = queue.Queue()
     scan_state: dict[str, Any] = {"running": False, "result": None, "error": None, "cancel_event": None}
+    embedding_progress_lock = threading.Lock()
+    embedding_progress_state: dict[str, Any] = {"generation": 0, "phase": "idle"}
+    embedding_progress_ui_generation = {"value": -1}
+
+    def publish_embedding_progress(event: dict[str, Any]) -> None:
+        """Thread-safe event bridge: model download worker -> Flet event loop."""
+        with embedding_progress_lock:
+            generation = int(embedding_progress_state.get("generation", 0)) + 1
+            embedding_progress_state.clear()
+            embedding_progress_state.update(event)
+            embedding_progress_state["generation"] = generation
+
+    def reset_embedding_progress() -> None:
+        publish_embedding_progress({"phase": "idle", "message": "Kein Modell-Download aktiv."})
     graph3d_process: subprocess.Popen[Any] | None = None
     graph3d_payload_path: Path | None = None
 
@@ -309,6 +333,17 @@ def main(page: ft.Page) -> None:
 
     scan_status = ft.Text("Bereit für den Scan.", size=12, color=MUTED)
     scan_progress = ft.ProgressRing(width=18, height=18, visible=False, stroke_width=2)
+    scan_embedding_progress_text = ft.Text("Modell-Download wartet auf den ersten lokalen Embedding-Aufruf.", size=10, color=MUTED, selectable=True)
+    scan_embedding_progress_bar = ft.ProgressBar(value=None, visible=True, color=ACCENT, bgcolor=BORDER, bar_height=6)
+    _loading_image_b64 = image_as_base64("Enargeia_Loading_Indicator.png")
+    scan_embedding_progress_panel = ft.Container(
+        visible=False,
+        content=ft.Row(controls=[
+            ft.Image(src=_loading_image_b64, width=32, height=32, fit=ft.BoxFit.CONTAIN),
+            ft.Column(controls=[scan_embedding_progress_text, scan_embedding_progress_bar], spacing=6, expand=True),
+        ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=11, bgcolor=PANEL_ALT, border_radius=9,
+    )
     scan_start_button: ft.Button
     scan_rebuild_button: ft.Button
     scan_log = ft.ListView(expand=True, spacing=4, auto_scroll=True, controls=[ft.Text("Noch keine Scan-Aktivität. Starte einen Scan, um Live-Protokolle zu sehen.", size=11, color=MUTED)])
@@ -318,6 +353,16 @@ def main(page: ft.Page) -> None:
     graph_results = ft.Column(spacing=12, controls=[ft.Container(content=ft.Text("Wähle eine Datei oder einen Pfad, um die gespeicherten Graph-Beziehungen zu untersuchen.", size=12, color=MUTED), padding=18, bgcolor=PANEL, border=ft.Border.all(1, BORDER), border_radius=10)], expand=False)
     connection_status = ft.Text("Noch nicht geprüft", size=13, color=MUTED)
     connection_details = ft.Column(spacing=7, controls=[ft.Container(content=ft.Text("Starte den Systemtest, um Verbindungsdetails und Laufzeitdiagnose zu laden.", size=11, color=MUTED), padding=12, bgcolor=PANEL_ALT, border_radius=8)], expand=False)
+    connection_embedding_progress_text = ft.Text("Modell-Download wartet auf den ersten lokalen Embedding-Aufruf.", size=10, color=MUTED, selectable=True)
+    connection_embedding_progress_bar = ft.ProgressBar(value=None, visible=True, color=ACCENT, bgcolor=BORDER, bar_height=6)
+    connection_embedding_progress_panel = ft.Container(
+        visible=False,
+        content=ft.Row(controls=[
+            ft.Image(src=_loading_image_b64, width=32, height=32, fit=ft.BoxFit.CONTAIN),
+            ft.Column(controls=[connection_embedding_progress_text, connection_embedding_progress_bar], spacing=6, expand=True),
+        ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=11, bgcolor=PANEL_ALT, border_radius=9,
+    )
     graph_intelligence_status = ft.Text("Graphanalyse wurde noch nicht ausgeführt.", size=12, color=MUTED)
     graph_intelligence_output = ft.Column(spacing=9, controls=[ft.Container(content=ft.Text("Noch keine Analyseergebnisse. Führe zuerst eine Graphanalyse aus.", size=12, color=MUTED), padding=16, bgcolor=PANEL_ALT, border_radius=8)], expand=False)
     quality_status = ft.Text("Beziehungsvorschläge warten auf Prüfung.", size=12, color=MUTED)
@@ -325,11 +370,60 @@ def main(page: ft.Page) -> None:
     gds_analysis_checkbox = ft.Checkbox(label="GDS-Algorithmen zusätzlich ausführen (sofern installiert)", value=True)
 
     # ---------------- Utility rendering ----------------
+    def _format_embedding_progress(event: dict[str, Any]) -> tuple[str, float | None, bool]:
+        phase = str(event.get("phase") or "idle")
+        current = max(0, int(event.get("current_bytes") or 0))
+        total = max(0, int(event.get("total_bytes") or 0))
+        if phase == "idle":
+            return "", None, False
+        if phase == "preparing":
+            return str(event.get("message") or "Pruefe Modellcache und bereite Download vor ..."), None, True
+        if phase == "download":
+            current_mib = current / (1024 * 1024)
+            if total > 0:
+                total_mib = total / (1024 * 1024)
+                ratio = min(1.0, current / total)
+                return f"{event.get('description') or 'Modell herunterladen'}: {current_mib:.1f} / {total_mib:.1f} MiB ({ratio:.0%})", ratio, True
+            return f"Modell-Dateien werden heruntergeladen: {current_mib:.1f} MiB empfangen ...", None, True
+        if phase == "testing":
+            return str(event.get("message") or "Initialisiere ONNX Runtime und teste ein Embedding ..."), None, True
+        if phase == "complete":
+            dimensions = event.get("dimensions")
+            suffix = f" ({dimensions} Dimensionen)" if dimensions else ""
+            return str(event.get("message") or f"Lokales Embedding-Modell ist bereit{suffix}."), 1.0, True
+        if phase == "error":
+            return str(event.get("message") or "Modell-Download fehlgeschlagen."), 0.0, True
+        return str(event.get("message") or "Lokales Embedding-Modell wird vorbereitet ..."), None, True
+
+    def refresh_embedding_progress_controls() -> bool:
+        with embedding_progress_lock:
+            event = dict(embedding_progress_state)
+        generation = int(event.get("generation", 0))
+        if generation == embedding_progress_ui_generation["value"]:
+            return False
+        embedding_progress_ui_generation["value"] = generation
+        text_value, progress_value, visible = _format_embedding_progress(event)
+        for label, bar, panel in (
+            (scan_embedding_progress_text, scan_embedding_progress_bar, scan_embedding_progress_panel),
+            (connection_embedding_progress_text, connection_embedding_progress_bar, connection_embedding_progress_panel),
+        ):
+            label.value = text_value or "Modell-Download wartet auf den ersten lokalen Embedding-Aufruf."
+            label.color = BAD if event.get("phase") == "error" else (GOOD if event.get("phase") == "complete" else MUTED)
+            bar.value = progress_value
+            panel.visible = visible
+        return True
+
     def open_graph3d_viewer(data: dict[str, Any], root_filter: str = "") -> tuple[bool, str]:
         """Open or update the native WebView2 3D viewer without blocking Flet."""
         nonlocal graph3d_process, graph3d_payload_path
-        if importlib.util.find_spec("webview") is None:
-            return False, "3D-Engine fehlt. Bitte setup_windows.bat erneut ausführen, damit pywebview installiert wird."
+        if IS_FROZEN:
+            companion = Path(sys.executable).parent / "Enargeia3D" / "Enargeia3D.exe"
+            if not companion.is_file():
+                companion = Path(sys.executable).with_name("Enargeia3D.exe")
+            if not companion.is_file():
+                return False, f"Die 3D-Komponente fehlt: {companion}"
+        elif importlib.util.find_spec("webview") is None:
+            return False, "3D-Engine fehlt. Installiere für die Entwicklung die optionale GUI-Abhängigkeit pywebview."
         try:
             # The 3D window always represents the whole Neo4j database, not a selected-file neighborhood.
             payload = build_database_loading_payload()
@@ -345,12 +439,22 @@ def main(page: ft.Page) -> None:
             graph3d_payload_path = Path(tempfile.gettempdir()) / f"winkg_graph3d_{os.getpid()}_{uuid.uuid4().hex}.json"
             write_graph_payload(graph3d_payload_path, payload)
 
-            python_executable = sys.executable
-            if os.name == "nt":
-                pythonw = Path(sys.executable).with_name("pythonw.exe")
-                if pythonw.is_file():
-                    python_executable = str(pythonw)
-            command = [python_executable, "-m", "winkg.graph3d_window", "--payload", str(graph3d_payload_path)]
+            if IS_FROZEN:
+                # The packaged application uses a small dedicated companion executable;
+                # invoking the main EXE with ``-m`` would not work under PyInstaller.
+                companion = Path(sys.executable).parent / "Enargeia3D" / "Enargeia3D.exe"
+                if not companion.is_file():
+                    companion = Path(sys.executable).with_name("Enargeia3D.exe")
+                if not companion.is_file():
+                    return False, f"Die 3D-Komponente fehlt: {companion}"
+                command = [str(companion), "--payload", str(graph3d_payload_path)]
+            else:
+                python_executable = sys.executable
+                if os.name == "nt":
+                    pythonw = Path(sys.executable).with_name("pythonw.exe")
+                    if pythonw.is_file():
+                        python_executable = str(pythonw)
+                command = [python_executable, "-m", "winkg.graph3d_window", "--payload", str(graph3d_payload_path)]
             graph3d_process = subprocess.Popen(
                 command,
                 cwd=str(PROJECT_ROOT),
@@ -377,7 +481,7 @@ def main(page: ft.Page) -> None:
                 galaxy_status,
             ], spacing=4, expand=True),
             ft.Button(content="Live-3D-Galaxie öffnen", icon=_safe_icon("OPEN_IN_NEW_ROUNDED"), on_click=launch_graph3d_from_button),
-        ], spacing=14, vertical_alignment=ft.CrossAxisAlignment.CENTER), padding=18, bgcolor="#0A1D2B", border_color="#1B6A6B")
+        ], spacing=14, vertical_alignment=ft.CrossAxisAlignment.CENTER), padding=18, bgcolor="#0B1C36", border_color="#1A3554")
 
     def launch_graph3d_from_button(_: Any = None) -> None:
         opened, message = open_graph3d_viewer({}, "")
@@ -478,8 +582,8 @@ def main(page: ft.Page) -> None:
                 spacing=8,
             ),
             padding=22,
-            bgcolor="#101D2A",
-            border_color="#284552",
+            bgcolor="#0B1C36",
+            border_color="#1A3554",
             radius=18,
         )
 
@@ -724,6 +828,8 @@ def main(page: ft.Page) -> None:
         if rebuild:
             # Require a fresh confirmation for every destructive rebuild.
             rebuild_confirm_checkbox.value = False
+        reset_embedding_progress()
+        refresh_embedding_progress_controls()
         cancel_event = threading.Event()
         scan_state.update({"running": True, "result": None, "error": None, "cancel_event": cancel_event})
         scan_status.value = "Scan läuft … Die Oberfläche bleibt währenddessen bedienbar."
@@ -747,7 +853,7 @@ def main(page: ft.Page) -> None:
             try:
                 settings = get_settings()
                 settings.validate_neo4j()
-                indexer = DirectoryIndexer(settings)
+                indexer = DirectoryIndexer(settings, embedding_progress_callback=publish_embedding_progress)
                 result = indexer.index(
                     root_path,
                     force=bool(force_checkbox.value) and not rebuild,
@@ -771,15 +877,18 @@ def main(page: ft.Page) -> None:
                 app_logger.removeHandler(handler)
                 scan_state["running"] = False
 
-        threading.Thread(target=worker, name="win-kg-scan", daemon=True).start()
+        threading.Thread(target=worker, name="enargeia-scan", daemon=True).start()
         page.run_task(monitor_scan_task)
         page.update()
 
     async def monitor_scan_task() -> None:
         while scan_state["running"]:
             drain_scan_logs()
-            await asyncio.sleep(0.3)
+            if refresh_embedding_progress_controls():
+                page.update()
+            await asyncio.sleep(0.25)
         drain_scan_logs(max_count=5000)
+        refresh_embedding_progress_controls()
         scan_progress.visible = False
         scan_start_button.disabled = False
         scan_rebuild_button.disabled = False
@@ -845,6 +954,7 @@ def main(page: ft.Page) -> None:
                     ),
                     ft.Row(controls=[ft.Icon(_safe_icon("SHIELD_OUTLINED"), color=GOOD, size=16), ft.Text("Quelldateien werden nicht verändert.", size=10, color=GOOD)], spacing=8),
                     scan_status,
+                    scan_embedding_progress_panel,
                     ft.ExpansionTile(
                         title=ft.Text("Verarbeitungsoptionen", color=TEXT, size=12, weight=ft.FontWeight.W_600),
                         subtitle=ft.Text("Embeddings, LLM-Extraktion, erneute Verarbeitung und Ausschlüsse", color=MUTED, size=10),
@@ -867,7 +977,7 @@ def main(page: ft.Page) -> None:
                 controls=[
                     ft.Row(controls=[ft.Column(controls=[ft.Text("Laufaktivität", size=17, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Fortschritt und Diagnostik des aktuellen Scans.", size=11, color=MUTED)], spacing=4, expand=True), ft.IconButton(icon=_safe_icon("DELETE_SWEEP_OUTLINED"), tooltip="Protokoll leeren", on_click=lambda e: clear_scan_log())], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
                     ft.Container(content=ft.Row(controls=[_icon_tile(_safe_icon("TERMINAL_OUTLINED"), BLUE, size=34), ft.Column(controls=[ft.Text("Scan-Protokoll", size=11, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Letzte 350 Logzeilen", size=9, color=SUBTLE)], spacing=2)], spacing=9), padding=10, bgcolor=PANEL_ALT, border_radius=10),
-                    ft.Container(content=scan_log, height=405, padding=12, bgcolor="#080F18", border=ft.Border.all(1, BORDER), border_radius=10),
+                    ft.Container(content=scan_log, height=405, padding=12, bgcolor="#071326", border=ft.Border.all(1, BORDER), border_radius=10),
                     ft.Row(controls=[ft.Icon(_safe_icon("PAUSE_CIRCLE_OUTLINED"), color=WARN, size=16), ft.Text("Abbrechen stoppt an einer sicheren Verarbeitungsgrenze; den gleichen Root später erneut starten.", size=10, color=MUTED, expand=True)], spacing=8),
                 ], spacing=12,
             ), padding=18,
@@ -950,7 +1060,7 @@ def main(page: ft.Page) -> None:
                         ],
                         spacing=8,
                     ),
-                    bgcolor="#20324B",
+                    bgcolor="#15345A",
                 )
             )
 
@@ -1177,11 +1287,11 @@ def main(page: ft.Page) -> None:
                     )
                     relation_line = ft.Container(
                         content=ft.Row(controls=[
-                            ft.Container(content=ft.Text(subject, size=11, color=TEXT, max_lines=2), padding=10, bgcolor="#203247", border_radius=8, expand=True),
+                            ft.Container(content=ft.Text(subject, size=11, color=TEXT, max_lines=2), padding=10, bgcolor="#102747", border_radius=8, expand=True),
                             ft.Column(controls=[ft.Icon(_safe_icon("ARROW_FORWARD_ROUNDED"), color=ACCENT, size=18), ft.Text(predicate, size=9, color=ACCENT, text_align=ft.TextAlign.CENTER)], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                            ft.Container(content=ft.Text(object_name, size=11, color=TEXT, max_lines=2), padding=10, bgcolor="#203247", border_radius=8, expand=True),
+                            ft.Container(content=ft.Text(object_name, size=11, color=TEXT, max_lines=2), padding=10, bgcolor="#102747", border_radius=8, expand=True),
                         ], spacing=9, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        padding=12, bgcolor="#0D1723", border_radius=11,
+                        padding=12, bgcolor="#071326", border_radius=11,
                     )
                     quality_output.controls.append(
                         _card(ft.Column(controls=[
@@ -1277,23 +1387,26 @@ def main(page: ft.Page) -> None:
 
     # ---------------- Connection view ----------------
     def open_env_file(_: Any) -> None:
-        env_file = PROJECT_ROOT / ".env"
-        if not env_file.exists():
-            env_file = PROJECT_ROOT / ".env.example"
+        """Open the guided setup wizard instead of exposing raw configuration to users."""
         try:
-            if os.name == "nt":
-                subprocess.Popen(["notepad.exe", str(env_file)])
-                connection_status.value = f"In Notepad geöffnet: {env_file}"
-                connection_status.color = GOOD
+            if IS_FROZEN:
+                command = [sys.executable, "--configure"]
+                subprocess.Popen(command, cwd=str(PROJECT_ROOT), close_fds=True)
             else:
-                connection_status.value = f"Konfigurationsdatei: {env_file}"
-                connection_status.color = MUTED
+                subprocess.Popen(
+                    [sys.executable, "-m", "winkg.bootstrap", "--configure"],
+                    cwd=str(PROJECT_ROOT), close_fds=True,
+                )
+            connection_status.value = "Konfigurationsassistent wurde geöffnet. Änderungen gelten nach einem Neustart."
+            connection_status.color = GOOD
         except Exception as exc:
-            connection_status.value = f"Datei konnte nicht geöffnet werden: {exc}"
+            connection_status.value = f"Konfigurationsassistent konnte nicht geöffnet werden: {exc}"
             connection_status.color = BAD
         page.update()
 
     async def doctor_task() -> None:
+        reset_embedding_progress()
+        refresh_embedding_progress_controls()
         global_status.value = "Prüfe Neo4j und Embeddings …"
         global_status.color = WARN
         connection_status.value = "Verbindung wird geprüft …"
@@ -1305,7 +1418,18 @@ def main(page: ft.Page) -> None:
         ))
         page.update()
         try:
-            report = await asyncio.to_thread(_run_doctor, True)
+            # The embedding constructor/download blocks, so run it off the Flet
+            # event loop and poll the thread-safe progress state for live UI updates.
+            doctor_future = asyncio.create_task(
+                asyncio.to_thread(_run_doctor, True, publish_embedding_progress)
+            )
+            while not doctor_future.done():
+                if refresh_embedding_progress_controls():
+                    page.update()
+                await asyncio.sleep(0.2)
+            report = await doctor_future
+            if refresh_embedding_progress_controls():
+                page.update()
             connection_status.value = "Neo4j und Embeddings erreichbar"
             connection_status.color = GOOD
             connection_details.controls.clear()
@@ -1322,6 +1446,8 @@ def main(page: ft.Page) -> None:
             for key, control in quality_stat_values.items():
                 control.value = str(stats.get(key, 0))
         except Exception as exc:
+            publish_embedding_progress({"phase": "error", "message": f"Embedding-/Verbindungstest fehlgeschlagen: {exc}"})
+            refresh_embedding_progress_controls()
             connection_status.value = f"Verbindung fehlgeschlagen: {exc}"
             connection_status.color = BAD
             connection_details.controls.clear()
@@ -1338,9 +1464,9 @@ def main(page: ft.Page) -> None:
         rows: list[ft.Control] = []
         for key, value in _settings_preview().items():
             rows.append(ft.Container(content=ft.Row(controls=[ft.Text(key, size=11, color=MUTED, width=175), ft.Text(value, size=11, color=TEXT, selectable=True, expand=True)], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=12), padding=ft.Padding.symmetric(vertical=7), border=ft.Border.only(bottom=ft.BorderSide(1, BORDER))))
-        config_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("TUNE_OUTLINED"), BLUE, size=42), ft.Column(controls=[_eyebrow("CONFIGURATION"), ft.Text("Projektkonfiguration", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Werte aus .env; geheime Zugangsdaten werden nicht angezeigt.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), *rows, ft.Button(content="Konfiguration öffnen", icon=_safe_icon("EDIT_NOTE_OUTLINED"), on_click=open_env_file)], spacing=8), padding=18)
+        config_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("TUNE_OUTLINED"), BLUE, size=42), ft.Column(controls=[_eyebrow("CONFIGURATION"), ft.Text("Projektkonfiguration", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Datenbank, Embeddings und optionale KI unabhängig konfigurieren.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), *rows, ft.Button(content="Setup-Assistent öffnen", icon=_safe_icon("EDIT_NOTE_OUTLINED"), on_click=open_env_file)], spacing=8), padding=18)
         mcp_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("CABLE_OUTLINED"), ACCENT, size=42), ft.Column(controls=[_eyebrow("EXTERNAL ACCESS"), ft.Text("MCP für externe LLMs", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Der MCP-Prozess wird vom jeweiligen MCP-Client gestartet.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), ft.Row(controls=[_status_pill("Transport: stdio", BLUE), _status_pill("Clientstatus nicht direkt ermittelbar", WARN)], wrap=True, spacing=8), ft.Text("Die Werkzeuge stellen u. a. Such- und Kontextzugriff, Graph-Statistiken, Analysefunktionen, Beziehungsvorschläge und Quelleninformationen bereit. Die Desktop-GUI selbst enthält bewusst keine Chat-/RAG-Oberfläche.", size=11, color=MUTED, selectable=True)], spacing=12), padding=18)
-        health_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("MONITOR_HEART_OUTLINED"), GOOD, size=42), ft.Column(controls=[_eyebrow("HEALTH CHECK"), ft.Text("Verbindung & Laufzeit", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Neo4j und das konfigurierte Embedding-Modell testen.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), ft.Row(controls=[connection_status, ft.Container(width=8), ft.Button(content="Systemtest starten", icon=_safe_icon("PLAY_ARROW_ROUNDED"), on_click=lambda e: page.run_task(doctor_task))], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True), connection_details], spacing=12), padding=18)
+        health_panel = _card(ft.Column(controls=[ft.Row(controls=[_icon_tile(_safe_icon("MONITOR_HEART_OUTLINED"), GOOD, size=42), ft.Column(controls=[_eyebrow("HEALTH CHECK"), ft.Text("Verbindung & Laufzeit", size=16, weight=ft.FontWeight.W_600, color=TEXT), ft.Text("Neo4j und das konfigurierte Embedding-Modell testen.", size=11, color=MUTED)], spacing=4, expand=True)], spacing=12), ft.Divider(color=BORDER), ft.Row(controls=[connection_status, ft.Container(width=8), ft.Button(content="Systemtest starten", icon=_safe_icon("PLAY_ARROW_ROUNDED"), on_click=lambda e: page.run_task(doctor_task))], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True), connection_embedding_progress_panel, connection_details], spacing=12), padding=18)
         return ft.Column(controls=[ft.Row(controls=[ft.Container(content=config_panel, expand=7), ft.Container(content=ft.Column(controls=[mcp_panel, health_panel], spacing=14), expand=5)], spacing=14, vertical_alignment=ft.CrossAxisAlignment.START)], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
     # ---------------- Main navigation & desktop shell ----------------
@@ -1387,7 +1513,7 @@ def main(page: ft.Page) -> None:
         for nav_key, (tile, accent_bar, icon_control, label_control) in nav_tiles.items():
             active = nav_key == key
             tile.bgcolor = PANEL_ALT if active else SIDEBAR
-            tile.border = ft.Border.all(1, "#2D4D57" if active else SIDEBAR)
+            tile.border = ft.Border.all(1, "#1677FF" if active else SIDEBAR)
             accent_bar.bgcolor = ACCENT if active else SIDEBAR
             icon_control.color = ACCENT if active else MUTED
             label_control.color = TEXT if active else MUTED
@@ -1428,11 +1554,13 @@ def main(page: ft.Page) -> None:
         content=ft.Column(
             controls=[
                 ft.Container(
-                    content=ft.Row(controls=[
-                        ft.Container(content=ft.Icon(ft.Icons.HUB_OUTLINED, color="#08131A", size=25), width=48, height=48, alignment=ft.Alignment(0, 0), bgcolor=ACCENT, border_radius=15),
-                        ft.Column(controls=[ft.Text("KNOWLEDGE", size=14, weight=ft.FontWeight.BOLD, color=TEXT), ft.Text("GRAPH / CONTROL PLANE", size=9, color=ACCENT, weight=ft.FontWeight.BOLD)], spacing=4, expand=True),
-                    ], spacing=11, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=ft.Padding.symmetric(horizontal=7, vertical=12),
+                    content=ft.Image(
+                        src=image_as_base64("Enargeia_Logo_Dark_Background.png"),
+                        width=220, height=68, fit=ft.BoxFit.CONTAIN,
+                        semantics_label="Enargeia – Wissen verbindet",
+                    ),
+                    padding=ft.Padding.symmetric(horizontal=2, vertical=8),
+                    alignment=ft.Alignment(-1, 0),
                 ),
                 ft.Divider(color=BORDER),
                 ft.Column(controls=nav_controls, spacing=2),
@@ -1442,8 +1570,8 @@ def main(page: ft.Page) -> None:
                     ft.Text("Neo4j-first architecture", size=11, weight=ft.FontWeight.W_600, color=TEXT),
                     ft.Text("Native graph · GDS · MCP", size=10, color=MUTED),
                     ft.Text("Keine Quelldateien werden verändert.", size=9, color=SUBTLE),
-                ], spacing=7), padding=13, bgcolor="#0E1E2A", border_color="#203947", radius=12),
-                ft.Text(f"COMPANY KNOWLEDGE GRAPH  •  {__version__}", size=8, color=SUBTLE, text_align=ft.TextAlign.CENTER),
+                ], spacing=7), padding=13, bgcolor="#0B1C36", border_color="#1A3554", radius=12),
+                ft.Text(f"ENARGEIA  •  {__version__}", size=8, color=SUBTLE, text_align=ft.TextAlign.CENTER),
             ], expand=True, spacing=4,
         ),
     )
@@ -1454,7 +1582,7 @@ def main(page: ft.Page) -> None:
         bgcolor=HEADER,
         border=ft.Border.only(bottom=ft.BorderSide(1, BORDER)),
         content=ft.Row(controls=[
-            ft.Column(controls=[_eyebrow("COMPANY KNOWLEDGE GRAPH", SUBTLE), header_title, header_subtitle], spacing=3, expand=True),
+            ft.Column(controls=[_eyebrow("ENARGEIA", SUBTLE), header_title, header_subtitle], spacing=3, expand=True),
             ft.Container(content=ft.Row(controls=[header_status_dot, global_status], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER), bgcolor=PANEL_ALT, border=ft.Border.all(1, BORDER), border_radius=20, padding=ft.Padding.symmetric(horizontal=12, vertical=8)),
             ft.IconButton(icon=_safe_icon("REFRESH_ROUNDED"), tooltip="Graph-Bestand aktualisieren", icon_color=ACCENT, on_click=lambda e: page.run_task(load_dashboard_task)),
             ft.IconButton(icon=ft.Icons.SETTINGS_OUTLINED, tooltip="System & MCP", icon_color=MUTED, on_click=lambda e: navigate("connection")),

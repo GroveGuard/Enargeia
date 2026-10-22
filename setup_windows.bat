@@ -1,40 +1,23 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Windows Knowledge Graph - Setup
+title Enargeia - Developer Setup
 
-echo === Windows Knowledge Graph Setup ===
+echo === Enargeia - Entwicklungsumgebung ===
+echo Diese Datei richtet die Quellcode-Umgebung fuer Entwickler ein.
+echo Fuer Endanwender ist der Windows-Installer unter packaging\windows vorgesehen.
 echo.
-where python >nul 2>nul
-if errorlevel 1 goto no_python
-
-if not exist ".venv\Scripts\python.exe" (
-  echo Erstelle virtuelle Python-Umgebung...
-  python -m venv .venv
-  if errorlevel 1 goto error
-)
-
-echo Aktualisiere pip...
-".venv\Scripts\python.exe" -m pip install --upgrade pip
-if errorlevel 1 goto error
-
-echo Installiere Projekt und Abhaengigkeiten...
-".venv\Scripts\python.exe" -m pip install -e ".[gui,mcp,test]"
-if errorlevel 1 goto error
-
-if not exist ".env" copy ".env.example" ".env"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\dev.ps1" -Command setup
 if errorlevel 1 goto error
 
 echo.
-echo Installation abgeschlossen.
-echo Bearbeite .env und trage dein Neo4j-Passwort ein.
-echo Danach kannst du run_gui.vbs doppelklicken (oder run_gui.bat verwenden).
+echo Entwicklungsumgebung bereit.
+echo Starte run_gui.bat fuer Entwicklung mit sichtbarem Log.
+echo Starte run_gui.vbs fuer einen versteckten Start.
+echo Die Anwendung legt ihre Konfiguration standardmaessig in %%LOCALAPPDATA%%\Enargeia ab.
 echo.
 pause
 exit /b 0
-
-:no_python
-echo FEHLER: Python wurde nicht gefunden. Installiere Python 3.10 oder neuer und pruefe PATH.
 :error
 echo.
 echo Setup fehlgeschlagen. Die Fehlermeldung steht oben.

@@ -1,0 +1,63 @@
+{
+  "brand": "Enargeia",
+  "tagline": "WISSEN VERBINDET",
+  "colors": {
+    "deep_navy": {
+      "hex": "#071326",
+      "rgb": "7, 19, 38",
+      "usage": "Primärer Hintergrund, Splash, Installer"
+    },
+    "navy_surface": {
+      "hex": "#0B1C36",
+      "rgb": "11, 28, 54",
+      "usage": "Sekundäre Flächen"
+    },
+    "electric_blue": {
+      "hex": "#1677FF",
+      "rgb": "22, 119, 255",
+      "usage": "Primäre Aktion, Links, Fokus"
+    },
+    "graph_cyan": {
+      "hex": "#11C5E8",
+      "rgb": "17, 197, 232",
+      "usage": "Knoten, Verbindungen, Highlights"
+    },
+    "galaxy_violet": {
+      "hex": "#8057F5",
+      "rgb": "128, 87, 245",
+      "usage": "Akzente und sekundäre Graphknoten"
+    },
+    "white": {
+      "hex": "#F4F8FF",
+      "rgb": "244, 248, 255",
+      "usage": "Primäre Schrift auf dunklen Flächen"
+    },
+    "muted_blue_grey": {
+      "hex": "#91A9C8",
+      "rgb": "145, 169, 200",
+      "usage": "Sekundärtext"
+    },
+    "success_green": {
+      "hex": "#31D27C",
+      "rgb": "49, 210, 124",
+      "usage": "Erfolg und abgeschlossene Installation"
+    }
+  },
+  "typography": {
+    "primary": "Inter",
+    "windows_fallback": "Segoe UI",
+    "generic_fallback": "Arial, sans-serif"
+  },
+  "logo_rules": [
+    "Markenzeichen nicht stauchen oder drehen.",
+    "Farben und Proportionen nicht verändern.",
+    "Rund um das Zeichen mindestens die Breite eines zentralen Knotens freihalten.",
+    "Auf hellen Flächen die Light-Background-Variante verwenden; auf dunklen Flächen die Dark-Background-Variante."
+  ],
+  "recommended_assets": {
+    "Windows application icon": "icons/Enargeia.ico",
+    "Inno Setup / NSIS sidebar": "installer/Enargeia_Installer_Sidebar.bmp",
+    "Installer banner/header": "installer/Enargeia_Installer_Header.bmp",
+    "Splash screen": "installer/Enargeia_Splash_Screen.png"
+  }
+}

@@ -3,10 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "neo4j-windows-knowledge-graph"
-version = "1.0.0"
-description = "Neo4j-first Company Knowledge Graph with hybrid search and graph intelligence"
-readme = "README.md"
+name = "enargeia"
+version = "1.2.0"
+description = "Enargeia: a self-learning corporate knowledge graph with hybrid search and graph intelligence"
 requires-python = ">=3.10"
 dependencies = [
   "neo4j>=5.20,<7",
@@ -22,13 +21,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["flet>=1.0.4", "pywebview>=5.4"]
+gui = ["flet[desktop]==1.0.5", "pywebview>=5.4"]
+local-embeddings = ["fastembed==0.9.0", "onnxruntime==1.23.0", "huggingface-hub==0.36.2"]
 mcp = ["mcp>=1.9,<2"]
 docling = ["docling>=2.0"]
 test = ["pytest>=8.0"]
+package = ["pyinstaller>=6.0", "keyring>=25; platform_system == 'Windows'"]
+dev = [
+  "flet[desktop]==1.0.5",
+  "pywebview>=5.4",
+  "fastembed==0.9.0",
+  "onnxruntime==1.23.0",
+  "huggingface-hub==0.36.2",
+  "mcp>=1.9,<2",
+  "pytest>=8.0",
+  "keyring>=25; platform_system == 'Windows'",
+]
 
 [project.scripts]
-win-kg = "winkg.cli:main"
+enargeia-cli = "winkg.cli:main"
+enargeia = "winkg.bootstrap:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -38,4 +50,4 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 
 [tool.setuptools.package-data]
-winkg = ["ui/*.html"]
+winkg = ["ui/*.html", "ui/assets/*.png", "ui/assets/*.ico"]

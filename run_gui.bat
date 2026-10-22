@@ -1,4 +1,6 @@
 @echo off
-rem Forward to the hidden Windows Script Host launcher and close this window.
-start "" "%SystemRoot%\System32\wscript.exe" //B //NoLogo "%~dp0run_gui.vbs"
-exit /b 0
+setlocal
+cd /d "%~dp0"
+rem Development launcher: run the editable source tree with visible logs.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\dev.ps1" -Command run
+exit /b %errorlevel%
