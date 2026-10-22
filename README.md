@@ -11,10 +11,6 @@
   </p>
 </div>
 
-<p align="center">
-  <img src="assets/branding/Enargeia_Corporate_Design/preview/Enargeia_Asset_Overview.jpg" alt="Enargeia Corporate Design: Logos, App-Icons und Installer-Grafiken" width="900">
-</p>
-
 ## Überblick
 
 **Enargeia** baut aus ausgewählten Windows-Verzeichnissen einen durch Quellen belegten Wissensgraphen in Neo4j auf. Dokumente und Textabschnitte werden mit Metadaten, Entitäten und Beziehungen verknüpft. So lassen sich Strukturen, Abhängigkeiten und mögliche Wissenslücken nachvollziehen, statt Dateien nur als isolierte Einträge zu verwalten.
