@@ -33,12 +33,17 @@ def test_windows_build_installs_and_bundles_docling():
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     script = (ROOT / "packaging/windows/build_windows.ps1").read_text(encoding="utf-8")
     helper = (ROOT / "packaging/windows/check_embedding_build.py").read_text(encoding="utf-8")
+    spec = (ROOT / "Enargeia.spec").read_text(encoding="utf-8")
     assert '"docling>=2.0"' in project
     assert ".[gui,local-embeddings,package,docling,mcp]" in script
     for package in ("docling", "docling_core", "docling_parse", "docling_ibm_models"):
         assert f"'--collect-all','{package}'" in script
+    assert "'--collect-all','latex2mathml'" in script
+    assert "unimathsymbols.txt" in script
+    assert "collect_all('latex2mathml')" in spec
     assert "'--copy-metadata','docling-slim'" in script
     assert "from docling.document_converter import DocumentConverter" in helper
+    assert "latex2mathml_data" in helper
     assert 'version("docling")' in helper
 
 

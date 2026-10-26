@@ -78,3 +78,29 @@ def test_docling_converter_is_reused_between_documents(monkeypatch, tmp_path):
     assert _docling_extract(Path(second)) == second
     assert len(constructions) == 1
     assert converted == [first, second]
+
+
+def test_docling_initialization_failure_falls_back_to_standard_parser(monkeypatch, tmp_path):
+    import builtins
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    import winkg.extractors as extractors
+
+    class BrokenConverter:
+        def __init__(self):
+            raise FileNotFoundError("latex2mathml/unimathsymbols.txt")
+
+    real_import = builtins.__import__
+
+    def import_with_broken_docling(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "docling.document_converter":
+            return SimpleNamespace(DocumentConverter=BrokenConverter)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_with_broken_docling)
+    monkeypatch.setattr(extractors, "_docling_converter", None)
+    monkeypatch.setattr(extractors, "_extract_xlsx", lambda raw: "Standard-Extraktion")
+
+    settings = replace(get_settings(), use_docling=True)
+    assert extractors.extract_text(tmp_path / "table.xlsx", b"workbook", settings) == "Standard-Extraktion"

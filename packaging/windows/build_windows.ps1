@@ -45,6 +45,7 @@ $GuiArgs = $Common + @(
   '--hidden-import','flet_desktop','--copy-metadata','flet','--copy-metadata','flet-desktop',
   '--collect-all','fastembed','--collect-binaries','onnxruntime','--collect-data','onnxruntime',
   '--collect-all','docling','--collect-all','docling_core','--collect-all','docling_parse','--collect-all','docling_ibm_models',
+  '--collect-all','latex2mathml',
   '--collect-all','huggingface_hub','--collect-all','tokenizers','--collect-all','tqdm','--collect-all','pymupdf',
   '--hidden-import','fastembed','--hidden-import','fastembed.text.text_embedding',
   '--hidden-import','onnxruntime','--hidden-import','onnxruntime.capi',
@@ -104,6 +105,16 @@ if ($PyMuPDFLayoutData.Count -eq 0) {
   throw 'Generated GUI bundle is missing PyMuPDF layout data (layout_rf2.4.1+imf1.yaml). Installer will not be created.'
 }
 Write-Host "PyMuPDF layout data verified in: $($PyMuPDFLayoutData[0])" -ForegroundColor Green
+
+$Latex2MathMLData = @(
+  Get-ChildItem -Path $AppBundle -File -Filter 'unimathsymbols.txt' -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.Directory.Name -eq 'latex2mathml' } |
+    Select-Object -ExpandProperty FullName
+)
+if ($Latex2MathMLData.Count -eq 0) {
+  throw 'Generated GUI bundle is missing latex2mathml data (unimathsymbols.txt). Installer will not be created.'
+}
+Write-Host "latex2mathml data verified in: $($Latex2MathMLData[0])" -ForegroundColor Green
 
 $GraphArgs = $Common + @(
   '--windowed','--name','Enargeia3D',

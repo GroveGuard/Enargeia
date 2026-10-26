@@ -227,16 +227,16 @@ def _docling_extract(path: Path) -> str | None:
             "Installiere die Docling-Abhängigkeit mit `pip install -e '.[docling]'` "
             "oder verwende einen Release-Build mit Docling."
         ) from exc
-    if _docling_converter is None:
-        with _DOCLING_CONVERTER_LOCK:
-            if _docling_converter is None:
-                started = time.monotonic()
-                _docling_converter = DocumentConverter()
-                log.info(
-                    "Docling-Pipeline initialisiert (%.1f s); verwende sie für weitere Dokumente wieder.",
-                    time.monotonic() - started,
-                )
     try:
+        if _docling_converter is None:
+            with _DOCLING_CONVERTER_LOCK:
+                if _docling_converter is None:
+                    started = time.monotonic()
+                    _docling_converter = DocumentConverter()
+                    log.info(
+                        "Docling-Pipeline initialisiert (%.1f s); verwende sie für weitere Dokumente wieder.",
+                        time.monotonic() - started,
+                    )
         started = time.monotonic()
         with _DOCLING_CONVERSION_LOCK:
             result = _docling_converter.convert(str(path))

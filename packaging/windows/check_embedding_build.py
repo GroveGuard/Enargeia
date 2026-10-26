@@ -14,6 +14,7 @@ def main() -> int:
         import onnxruntime
         import fastembed
         import pymupdf
+        import latex2mathml
         import docling
         from fastembed import TextEmbedding
         from docling.document_converter import DocumentConverter
@@ -39,6 +40,11 @@ def main() -> int:
         )
         if not layout_data.is_file():
             raise RuntimeError(f"PyMuPDF layout data is missing: {layout_data}")
+        latex2mathml_data = (
+            Path(latex2mathml.__file__).resolve().parent / "unimathsymbols.txt"
+        )
+        if not latex2mathml_data.is_file():
+            raise RuntimeError(f"latex2mathml data is missing: {latex2mathml_data}")
         flet_version = version("flet")
         if flet_version != "1.0.5":
             raise RuntimeError(
@@ -66,6 +72,7 @@ def main() -> int:
         print(f"ONNX Runtime: {onnxruntime.__version__}")
         print(f"Execution providers: {', '.join(providers)}")
         print(f"PyMuPDF layout data: {layout_data}")
+        print(f"latex2mathml data: {latex2mathml_data}")
         return 0
     except Exception as exc:
         print(f"Build runtime dependency preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr)
