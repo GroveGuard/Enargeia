@@ -123,6 +123,48 @@ def test_page_content_does_not_repeat_global_page_title_banners():
     assert 'ft.Text("System & MCP", size=23' not in connection
 
 
+def test_mcp_has_a_dedicated_setup_page_and_tool_safety_overview():
+    source = GUI_SOURCE.read_text(encoding="utf-8")
+    assert '"mcp": build_mcp_view' in source
+    assert '("mcp", "MCP-Integration"' in source
+    assert "Serverstart und Werkzeuge prüfen" in source
+    assert "Werkzeuge und Zugriffsarten" in source
+    assert "Schreibt Analysebefunde" in source
+    assert "Ändert Prüfstatus" in source
+    assert "Einrichtung bestätigen" in source
+    assert "Letzte Änderung zurücksetzen" in source
+    assert "JSON-Fallback" in source
+    for tool_name in (
+        "search_knowledge",
+        "global_search_knowledge",
+        "get_file_context",
+        "find_related_files",
+        "get_graph_stats",
+        "get_graph_capabilities",
+        "analyze_knowledge_graph",
+        "list_graph_link_candidates",
+        "review_graph_link_candidate",
+        "list_graph_assertions",
+        "get_graph_insights",
+        "get_files_needing_deep_analysis",
+    ):
+        assert f'"{tool_name}"' in source
+    assert "ft.ResponsiveRow(" in source
+    assert 'col={"sm": 12, "md": 6}' in source
+    manual_setup = source.split("    def build_mcp_manual_section() -> ft.Control:", 1)[1].split(
+        "    async def mcp_probe_task()", 1
+    )[0]
+    assert "ft.ExpansionTile(" in manual_setup
+    assert '"Danach verbinden"' not in manual_setup
+    assert "Konfiguration kopieren" in manual_setup
+    assert 'font_family="Consolas"' in manual_setup
+    assert "selectable=True" in manual_setup
+    assert "height=190" in manual_setup
+    assert "horizontal_alignment=ft.CrossAxisAlignment.STRETCH" in manual_setup
+    assert "], alignment=ft.MainAxisAlignment.END, spacing=0)," in manual_setup
+    assert "controls_padding=ft.Padding.symmetric(horizontal=12, vertical=2)" in manual_setup
+
+
 def test_dashboard_advanced_statistics_have_an_explicit_visible_toggle():
     source = GUI_SOURCE.read_text(encoding="utf-8")
     dashboard = source.split("    # ---------------- Scan view ----------------", 1)[0]

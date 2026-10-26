@@ -6,6 +6,8 @@ import io
 import json
 import logging
 import re
+import threading
+import time
 import xml.etree.ElementTree as ET
 from email import policy
 from pathlib import Path
@@ -16,6 +18,9 @@ from charset_normalizer import from_bytes
 from .config import Settings
 
 log = logging.getLogger(__name__)
+_docling_converter: Any | None = None
+_DOCLING_CONVERTER_LOCK = threading.Lock()
+_DOCLING_CONVERSION_LOCK = threading.Lock()
 
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".markdown", ".rst", ".adoc", ".tex", ".log", ".ini",
@@ -213,13 +218,29 @@ def _extract_ipynb(text: str) -> str:
 
 
 def _docling_extract(path: Path) -> str | None:
+    global _docling_converter
     try:
         from docling.document_converter import DocumentConverter
-    except ImportError:
-        log.warning("USE_DOCLING=true, aber Docling fehlt. Installiere mit: pip install -e '.[docling]'")
-        return None
+    except ImportError as exc:
+        raise RuntimeError(
+            "USE_DOCLING=true, aber Docling ist in dieser Installation nicht verfügbar. "
+            "Installiere die Docling-Abhängigkeit mit `pip install -e '.[docling]'` "
+            "oder verwende einen Release-Build mit Docling."
+        ) from exc
+    if _docling_converter is None:
+        with _DOCLING_CONVERTER_LOCK:
+            if _docling_converter is None:
+                started = time.monotonic()
+                _docling_converter = DocumentConverter()
+                log.info(
+                    "Docling-Pipeline initialisiert (%.1f s); verwende sie für weitere Dokumente wieder.",
+                    time.monotonic() - started,
+                )
     try:
-        result = DocumentConverter().convert(str(path))
+        started = time.monotonic()
+        with _DOCLING_CONVERSION_LOCK:
+            result = _docling_converter.convert(str(path))
+        log.info("Docling-Konvertierung %s: %.1f s", path.name, time.monotonic() - started)
         return result.document.export_to_markdown()
     except Exception as exc:
         log.warning("Docling konnte %s nicht extrahieren: %s; verwende Standardparser.", path, exc)

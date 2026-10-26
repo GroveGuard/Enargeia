@@ -1,5 +1,5 @@
 #define MyAppName "Enargeia"
-#define MyAppVersion "1.2.1"
+#define MyAppVersion "1.2.2"
 #define MyAppPublisher "Enargeia"
 #define MyAppExeName "Enargeia.exe"
 #define BrandRoot "..\..\assets\branding\Enargeia_Corporate_Design"
@@ -46,6 +46,8 @@ Source: "{#BrandRoot}\installer\Enargeia_Splash_Screen.bmp"; Flags: dontcopy
 Source: "{#BrandRoot}\installer\Enargeia_Setup_Complete.bmp"; Flags: dontcopy
 Source: "..\..\dist\Enargeia\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\dist\Enargeia3D\*"; DestDir: "{app}\Enargeia3D"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\dist\EnargeiaMCP.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\dist\Enargeia-MCP.mcpb"; DestDir: "{app}\extensions"; DestName: "Enargeia-MCP.mcpb"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

@@ -14,6 +14,7 @@ def test_development_extra_contains_runtime_and_test_dependencies():
 
     assert any(item.startswith("flet[desktop]==1.0.5") for item in dev)
     assert any(item.startswith("fastembed==0.9.0") for item in dev)
+    assert any(item.startswith("docling>=2.0") for item in dev)
     assert any(item.startswith("pytest>=8.0") for item in dev)
 
 

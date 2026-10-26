@@ -5,7 +5,7 @@
   <p>Windows-Desktop-Anwendung zum Aufbau, zur Qualitätssicherung und zur Analyse eines Unternehmens-Knowledge-Graphen.</p>
 
   <p>
-    <img src="https://img.shields.io/badge/Version-1.2.1-1677FF?style=flat-square" alt="Version 1.2.1">
+    <img src="https://img.shields.io/badge/Version-1.2.2-1677FF?style=flat-square" alt="Version 1.2.2">
     <img src="https://img.shields.io/badge/Plattform-Windows%20x64-071326?style=flat-square" alt="Windows x64">
     <img src="https://img.shields.io/badge/Python-3.10--3.13-3776AB?style=flat-square" alt="Python 3.10 bis 3.13">
   </p>
@@ -92,7 +92,8 @@ Die Graphdatenbank ist das zentrale Wissens-Backend. Die Desktop-Anwendung dient
 | **Graph Explorer** | Knoten, Kanten, Dateien und Quellenbeziehungen strukturell untersuchen |
 | **Qualität & Beziehungen** | Evidenz und Beziehungsvorschläge prüfen und kontrolliert entscheiden |
 | **Graph-Analysen** | Struktur, Abdeckung und Beziehungen mit Cypher und optional GDS analysieren |
-| **System & MCP** | Datenbank- und Embedding-Verbindungen prüfen, Konfiguration ansehen und externe Anbindung vorbereiten |
+| **MCP-Integration** | MCP-Clients einrichten, Werkzeuge und Berechtigungen ansehen und den lokalen Server testen |
+| **System & Konfiguration** | Datenbank- und Embedding-Verbindungen prüfen und die Projektkonfiguration ansehen |
 
 ## Laufzeitoptionen
 
@@ -148,15 +149,33 @@ Weitere Befehle umfassen unter anderem `file`, `graph-capabilities`, `analyze-gr
 
 ## MCP-Integration
 
-Enargeia stellt über einen MCP-Server Werkzeuge für Such- und Kontextzugriff, verwandte Dateien, Graphstatistiken, Analysebefunde und die Verwaltung von Beziehungsvorschlägen bereit. Der MCP-Prozess wird vom jeweiligen MCP-Client gestartet und verwendet die konfigurierte Enargeia-Laufzeit.
+Enargeia stellt einen lokalen MCP-Server über **stdio** bereit. Der MCP-Client startet und verwaltet den Prozess; es wird kein öffentlicher Netzwerkserver eingerichtet. Die Werkzeuge umfassen Suche und Dateikontext, Graphstatistiken und Befunde sowie Graphanalyse und das Bewerten von Beziehungsvorschlägen.
 
-Der Server kann aus der eingerichteten Entwicklungsumgebung über Python gestartet werden:
+Die neue Seite **MCP-Integration** in der Desktop-Anwendung erkennt unterstützte Clients und zeigt deren Einrichtungsstatus. Vor jeder automatischen Konfigurationsänderung zeigt Enargeia den betroffenen Client, das Ziel und den MCP-Startbefehl. Vorhandene Client-Dateien werden gesichert; weitere Servereinträge bleiben erhalten. Je nach Client kann nach dem Einrichten ein Neustart oder erneutes Laden erforderlich sein.
+
+- **Codex / ChatGPT Desktop:** Lokaler Servereintrag in der gemeinsam genutzten Codex-Konfiguration. Dieser Eintrag kann auch Codex CLI und die Codex-IDE-Integration betreffen.
+- **Claude Desktop:** Der Windows-Installer enthält ein Claude Desktop MCP Bundle (`.mcpb`). Enargeia öffnet das Bundle; die Installation muss anschließend in Claude Desktop geprüft und bestätigt werden. Eine JSON-Konfiguration ist als Fallback verfügbar.
+- **VS Code / Copilot:** Enargeia verwendet die persönliche Copilot-MCP-Konfiguration. Workspace-Dateien werden nicht ungefragt verändert.
+- **Andere Clients:** Im Abschnitt „Manuell verbinden“ stehen getrennte Konfigurationsbeispiele für Codex, Claude Desktop, VS Code, Copilot Global und generische stdio-Clients.
+
+Die Aktion **Serverstart und Werkzeuge prüfen** führt einen lokalen stdio-Handshake aus und listet die angebotenen Werkzeuge. Sie bestätigt nicht, dass ein bestimmter Desktop-Client verbunden ist. Prüfe im jeweiligen Client zusätzlich dessen MCP-Status und Sicherheits-/Freigabeaufforderungen.
+
+Vor der Verbindung zeigt Enargeia die Werkzeuggruppen und markiert zustandsändernde Funktionen gesondert:
+
+- **Lesezugriff:** Suchergebnisse, Dokumentauszüge, Quellpfade und Graphdaten können dem Client und dessen Modell zugänglich werden.
+- **Graphanalyse:** speichert Analyse-Läufe und Befunde im Enargeia-Graph.
+- **Beziehungsvorschläge bewerten:** verändert den Prüfstatus eines Vorschlags und kann ihn annehmen oder verwerfen.
+
+Die tatsächliche Verfügbarkeit und Freigabe einzelner Werkzeuge hängt vom verwendeten MCP-Client ab. Prüfe dessen Bestätigungs- und Berechtigungseinstellungen.
+
+Für eine Entwicklungsinstallation muss das optionale MCP-Extra installiert sein:
 
 ```powershell
+pip install -e '.[mcp]'
 .\.venv\Scripts\python.exe -m winkg.mcp_server
 ```
 
-Der MCP-Client muss den Befehl mit dem passenden Python-Interpreter und dem Argument `-m winkg.mcp_server` starten können. Die konkreten Einstellungen unterscheiden sich je nach MCP-Host.
+Der MCP-Server schreibt Protokollnachrichten auf stdout; Diagnoseinformationen gehen auf stderr. Die Konfigurationsbeispiele auf der MCP-Seite berücksichtigen den jeweiligen Startbefehl und die passenden Host-Formate.
 
 ## Datenschutz und Speicherorte
 
@@ -219,7 +238,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\packaging\windows\build_windows.ps1
 ```
 
-Das Build-Skript nutzt eine getrennte Umgebung `.venv-packaging`, installiert festgelegte Laufzeitabhängigkeiten, prüft Flet-/FastEmbed-/ONNX-Voraussetzungen und kontrolliert, ob die benötigten nativen ONNX-Dateien im PyInstaller-Bundle enthalten sind. Das Modell selbst wird nicht mitgepackt. Ohne installiertes Inno Setup werden die PyInstaller-Dateien in `dist` erstellt; der Installer wird erst mit `ISCC.exe` generiert.
+Das Build-Skript nutzt eine getrennte Umgebung `.venv-packaging`, installiert festgelegte Laufzeitabhängigkeiten einschließlich Docling, prüft Flet-/FastEmbed-/ONNX-/Docling-Voraussetzungen und kontrolliert, ob die benötigten nativen ONNX-Dateien im PyInstaller-Bundle enthalten sind. Embedding- und Docling-Modellgewichte werden nicht mitgepackt; Docling lädt benötigte Modelle bei der ersten Verwendung. Ohne installiertes Inno Setup werden die PyInstaller-Dateien in `dist` erstellt; der Installer wird erst mit `ISCC.exe` generiert.
 
 ### Relevante Projektstruktur
 
@@ -265,7 +284,7 @@ Die editierbaren SVG-Originale, PNG-Exporte, Windows-Icons, Installer-Banner, Sp
 
 1. Prüfe, ob der erste Modell-Download abgeschlossen ist und Internetzugriff besteht.
 2. Prüfe Schreibrechte und freien Speicherplatz unter `%LOCALAPPDATA%\Enargeia\models`.
-3. Öffne **System & MCP** und führe den Systemtest erneut aus.
+3. Öffne **System & Konfiguration** und führe den Systemtest erneut aus.
 4. Wenn der Fehler bleibt, sichere die zum Fehlerzeitpunkt gehörenden Logs aus `%LOCALAPPDATA%\Enargeia\logs`.
 
 ### Neo4j ist nicht erreichbar
@@ -283,4 +302,4 @@ Die editierbaren SVG-Originale, PNG-Exporte, Windows-Icons, Installer-Banner, Sp
 
 ## Projektstatus und Lizenz
 
-Die Projektversion ist **1.2.1**. Sie wird in `pyproject.toml`, `src/winkg/__init__.py` und der Windows-Installer-Konfiguration geführt.
+Die Projektversion ist **1.2.2**. Sie wird in `pyproject.toml`, `src/winkg/__init__.py` und der Windows-Installer-Konfiguration geführt.

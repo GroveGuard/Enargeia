@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any
 
 import requests
@@ -112,6 +113,7 @@ class EntityExtractor:
         headers = {"Content-Type": "application/json"}
         if self.settings.llm_api_key:
             headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
+        started = time.monotonic()
         response = self.session.post(
             f"{self.settings.llm_base_url}/chat/completions",
             headers=headers,
@@ -127,6 +129,11 @@ class EntityExtractor:
             timeout=self.settings.llm_timeout_seconds,
         )
         response.raise_for_status()
+        log.info(
+            "LLM-Antwortzeit Entity-Extraktion: %.1f s (Modell %s)",
+            time.monotonic() - started,
+            self.settings.llm_model,
+        )
         payload = response.json()
         content = payload["choices"][0]["message"]["content"]
         result = _parse_json_response(content)

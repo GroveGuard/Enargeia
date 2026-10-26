@@ -1,4 +1,4 @@
-"""Build-time preflight for local embeddings and the Flet desktop client; no model download."""
+"""Build-time preflight for local embeddings, Docling and the Flet desktop client."""
 from __future__ import annotations
 
 import sys
@@ -14,7 +14,9 @@ def main() -> int:
         import onnxruntime
         import fastembed
         import pymupdf
+        import docling
         from fastembed import TextEmbedding
+        from docling.document_converter import DocumentConverter
 
         expected = "1.23.0"
         fastembed_version = version("fastembed")
@@ -30,6 +32,7 @@ def main() -> int:
         if "CPUExecutionProvider" not in providers:
             raise RuntimeError(f"ONNX Runtime CPU provider is unavailable: {providers}")
         _ = TextEmbedding
+        _ = DocumentConverter
         layout_data = (
             Path(pymupdf.__file__).resolve().parent
             / "layout" / "resources" / "onnx" / "layout_rf2.4.1+imf1.yaml"
@@ -46,6 +49,9 @@ def main() -> int:
         # Construct an Image so the build preflight catches API mismatches before PyInstaller.
         ft.Image(src="", width=1, height=1, fit=ft.BoxFit.CONTAIN)
         desktop_version = version("flet-desktop")
+        docling_version = version("docling")
+        if tuple(int(part) for part in docling_version.split(".")[:2]) < (2, 0):
+            raise RuntimeError(f"Expected Docling >=2.0, found {docling_version}")
         hub_version = version("huggingface-hub")
         if hub_version != "0.36.2":
             raise RuntimeError(
@@ -54,6 +60,7 @@ def main() -> int:
             )
         print(f"Flet: {flet_version}; Image.fit uses BoxFit.CONTAIN")
         print(f"Flet desktop: {desktop_version} ({flet_desktop.__file__})")
+        print(f"Docling: {docling_version} ({docling.__file__})")
         print(f"Hugging Face Hub: {hub_version} (FastEmbed-compatible cache layout)")
         print(f"FastEmbed: {fastembed_version} ({fastembed.__file__})")
         print(f"ONNX Runtime: {onnxruntime.__version__}")

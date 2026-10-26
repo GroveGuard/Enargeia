@@ -6,6 +6,7 @@ from typing import Any
 
 try:
     from mcp.server.fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
 except ImportError as exc:  # pragma: no cover - depends on optional extra
     raise SystemExit(
         "MCP-Abhängigkeit fehlt. Installiere das Projekt mit: pip install -e '.[mcp]'"
@@ -18,9 +19,21 @@ from .search import KnowledgeSearch, format_search_results
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 log = logging.getLogger(__name__)
-mcp = FastMCP("Windows Knowledge Graph")
+mcp = FastMCP(
+    "Enargeia Knowledge Graph",
+    instructions=(
+        "Searches and analyzes the user's locally configured Enargeia knowledge graph. "
+        "Search and context tools may return private document excerpts and source paths. "
+        "Graph analysis stores analysis results. review_graph_link_candidate changes a "
+        "candidate's review status; use it only when the user explicitly requests that decision."
+    ),
+)
 _searcher: KnowledgeSearch | None = None
 _store: Neo4jStore | None = None
+
+
+def _read_only() -> ToolAnnotations:
+    return ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 
 
 def _runtime() -> tuple[KnowledgeSearch, Neo4jStore]:
@@ -40,7 +53,7 @@ def _root_id(root: str | None, store: Neo4jStore) -> str | None:
     return store.root_id_for(Path(root).expanduser().resolve())
 
 
-@mcp.tool()
+@mcp.tool(title="Search knowledge", annotations=_read_only())
 def search_knowledge(query: str, limit: int = 5, root: str | None = None) -> str:
     """Durchsucht indexierte Windows-Dateien hybrid über Volltext, Embeddings und Graphkontext. Gibt Quellenpfade zurück."""
     searcher, store = _runtime()
@@ -48,7 +61,7 @@ def search_knowledge(query: str, limit: int = 5, root: str | None = None) -> str
     return format_search_results(query, results)
 
 
-@mcp.tool()
+@mcp.tool(title="Search the knowledge graph globally", annotations=_read_only())
 def global_search_knowledge(query: str, limit: int = 8, root: str | None = None) -> str:
     """Beantwortet korpusweite Fragen mit gespeicherten Community-Zusammenfassungen und konkreten Quellabschnitten; kennzeichnet offene Fragen und gibt Originalpfade zurück."""
     searcher, store = _runtime()
@@ -56,7 +69,7 @@ def global_search_knowledge(query: str, limit: int = 8, root: str | None = None)
     return json.dumps(result, ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(title="Get indexed file context", annotations=_read_only())
 def get_file_context(path: str, root: str | None = None) -> str:
     """Liefert Metadaten und extrahierte Textabschnitte für einen absoluten oder relativen Dateipfad."""
     searcher, store = _runtime()
@@ -66,7 +79,7 @@ def get_file_context(path: str, root: str | None = None) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(title="Find related files", annotations=_read_only())
 def find_related_files(path: str, limit: int = 10, root: str | None = None) -> str:
     """Findet Dateien, die über extrahierte Entitäten im Knowledge Graph mit einer Datei verbunden sind."""
     searcher, store = _runtime()
@@ -76,7 +89,7 @@ def find_related_files(path: str, limit: int = 10, root: str | None = None) -> s
     return json.dumps(results, ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(title="Get graph statistics", annotations=_read_only())
 def get_graph_stats(root: str | None = None) -> str:
     """Gibt die Anzahl der Roots, Ordner, Dateien, Text-Chunks und Entitäten im Neo4j-Graph zurück."""
     _, store = _runtime()
@@ -84,14 +97,19 @@ def get_graph_stats(root: str | None = None) -> str:
 
 
 
-@mcp.tool()
+@mcp.tool(title="Get graph capabilities", annotations=_read_only())
 def get_graph_capabilities() -> str:
     """Zeigt Neo4j-Version, vorhandene Indizes und tatsächlich verfügbare Graph Data Science-Algorithmen an."""
     _, store = _runtime()
     return json.dumps(GraphIntelligence(store).capabilities(), ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Analyze the knowledge graph",
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    ),
+)
 def analyze_knowledge_graph(max_sample_chunks: int = 5000, max_candidates: int = 250,
                             run_gds: bool = True) -> str:
     """Analysiert den Neo4j-Wissensgraphen ohne LLM: Inhaltsduplikate, Abdeckungslücken, isolierte Entitäten und Beziehungskandidaten. GDS-Algorithmen werden nur ausgeführt, wenn sie installiert sind und das Sicherheitslimit eingehalten wird. Vorschläge werden nicht automatisch zu Fakten."""
@@ -103,7 +121,7 @@ def analyze_knowledge_graph(max_sample_chunks: int = 5000, max_candidates: int =
     return json.dumps(result, ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(title="List graph link candidates", annotations=_read_only())
 def list_graph_link_candidates(status: str | None = None, limit: int = 100, include_stale: bool = False) -> str:
     """Listet Beziehungskandidaten mit Belegen und Prüfstatus. Offene veraltete Vorschläge sind standardmäßig ausgeblendet."""
     _, store = _runtime()
@@ -113,7 +131,12 @@ def list_graph_link_candidates(status: str | None = None, limit: int = 100, incl
     return json.dumps(rows, ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(
+    title="Review a graph link candidate",
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+    ),
+)
 def review_graph_link_candidate(candidate_id: str, decision: str, note: str = "") -> str:
     """Bewertet einen Beziehungsvorschlag. Akzeptierte Kandidaten bleiben als KGAssertion mit freiem Prädikat erhalten und erzeugen eine generische KG_ASSERTED_LINK-Kante; verworfene oder zurückgestellte Kandidaten werden nicht als bestätigte Kante geführt."""
     _, store = _runtime()
@@ -121,7 +144,7 @@ def review_graph_link_candidate(candidate_id: str, decision: str, note: str = ""
     return json.dumps(row, ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(title="List graph assertions", annotations=_read_only())
 def list_graph_assertions(status: str | None = None, predicate: str | None = None,
                          limit: int = 100) -> str:
     """Listet generische, quellengebundene Aussagen aus Neo4j. Prädikate sind offen; Aussagen enthalten Status, Methode und Quellenhinweise."""
@@ -132,7 +155,7 @@ def list_graph_assertions(status: str | None = None, predicate: str | None = Non
     return json.dumps(rows, ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(title="Get graph insights", annotations=_read_only())
 def get_graph_insights(limit: int = 50, run_id: str | None = None) -> str:
     """Liefert in Neo4j gespeicherte Analysebefunde mit Begründung und strukturierten Details."""
     _, store = _runtime()
@@ -140,7 +163,7 @@ def get_graph_insights(limit: int = 50, run_id: str | None = None) -> str:
     return json.dumps(rows, ensure_ascii=False, indent=2, default=str)
 
 
-@mcp.tool()
+@mcp.tool(title="List files needing deep analysis", annotations=_read_only())
 def get_files_needing_deep_analysis(limit: int = 100, root: str | None = None) -> str:
     """Listet Dateien für eine spätere Analyse: zu große Dateien (nur Metadaten) und wegen MAX_CHUNKS_PER_FILE gekürzte Inhalte."""
     _, store = _runtime()

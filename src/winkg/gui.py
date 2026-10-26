@@ -19,6 +19,7 @@ from typing import Any, Callable
 import flet as ft
 
 from . import __version__
+from . import mcp_setup
 from .branding import image_as_base64, brand_asset_path
 from .config import IS_FROZEN, LOG_DIR, PROJECT_ROOT, get_settings
 from .embeddings import EmbeddingClient
@@ -131,7 +132,6 @@ def _show_dialog_compat(page: Any, dialog: Any) -> None:
         return
     dialog.open = True
     page.update()
-
 
 def _close_dialog_compat(page: Any, dialog: Any) -> None:
     """Close a dialog across Flet versions without depending on one API name."""
@@ -344,6 +344,8 @@ def _run_review_graph_link_candidate(candidate_id: str, decision: str, note: str
 
 def main(page: ft.Page) -> None:
     _configure_logging()
+    clipboard = ft.Clipboard()
+    page.services.append(clipboard)
     page.title = APP_NAME
     try:
         page.window.icon = str(brand_asset_path("Enargeia.ico"))
@@ -1468,6 +1470,576 @@ def main(page: ft.Page) -> None:
         ], spacing=12), padding=18)
         return ft.Column(controls=[config_panel, results_panel], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
+    # ---------------- MCP setup view ----------------
+    mcp_runtime_ready, mcp_runtime_message = mcp_setup.runtime_readiness()
+    mcp_server_status = ft.Text(
+        f"{mcp_runtime_message} Der MCP-Server wird von einem verbundenen Client gestartet.",
+        size=11, color=GOOD if mcp_runtime_ready else WARN, selectable=True,
+    )
+    mcp_action_status = ft.Text("", size=11, color=MUTED, selectable=True)
+    mcp_client_cards = ft.Column(spacing=10, controls=[])
+    mcp_page_ref: dict[str, ft.Column | None] = {"control": None}
+    mcp_backup_state: dict[str, Path | None] = {"target": None, "backup": None}
+    mcp_restore_button = ft.Button(
+        content="Letzte Änderung zurücksetzen",
+        icon=_safe_icon("UNDO_ROUNDED"),
+        visible=False,
+        on_click=lambda e: request_restore_mcp_backup(),
+    )
+
+    def _mcp_bundle_path() -> Path:
+        return mcp_setup.mcpb_bundle_path(PROJECT_ROOT, IS_FROZEN)
+
+    async def copy_mcp_text(value: str) -> None:
+        try:
+            await clipboard.set(value)
+            mcp_action_status.value = "Konfiguration in die Zwischenablage kopiert."
+            mcp_action_status.color = GOOD
+        except Exception as exc:
+            mcp_action_status.value = f"Kopieren fehlgeschlagen: {exc}"
+            mcp_action_status.color = BAD
+        page.update()
+
+    def _mcp_snippets() -> list[tuple[str, str]]:
+        codex_config = mcp_setup.client_config("codex")
+        claude_config = mcp_setup.client_config("claude")
+        vscode_config = {"type": "stdio", **mcp_setup.client_config("copilot")}
+        try:
+            import tomlkit
+            document = tomlkit.document()
+            servers = tomlkit.table()
+            server = tomlkit.table()
+            for key, value in codex_config.items():
+                server[key] = value
+            servers[mcp_setup.MCP_SERVER_NAME] = server
+            document["mcp_servers"] = servers
+            codex_text = tomlkit.dumps(document)
+        except ImportError:
+            codex_text = "# Installiere das MCP-Extra, um die Codex-TOML-Konfiguration zu erzeugen."
+        return [
+            ("Codex / ChatGPT Desktop – ~/.codex/config.toml",
+             codex_text),
+            ("Claude Desktop – claude_desktop_config.json",
+             json.dumps({"mcpServers": {"enargeia": claude_config}}, ensure_ascii=False, indent=2)),
+            ("VS Code – .vscode/mcp.json",
+             json.dumps({"servers": {"enargeia": vscode_config}}, ensure_ascii=False, indent=2)),
+            ("Copilot Global – ~/.copilot/mcp-config.json",
+             json.dumps({"mcpServers": {"enargeia": mcp_setup.client_config("copilot")}}, ensure_ascii=False, indent=2)),
+            ("Generischer MCP-Client – stdio",
+             json.dumps({"command": claude_config["command"], "args": claude_config.get("args", []),
+                         **({"env": claude_config["env"]} if claude_config.get("env") else {})},
+                        ensure_ascii=False, indent=2)),
+        ]
+
+    def build_mcp_manual_section() -> ft.Control:
+        try:
+            snippets = _mcp_snippets()
+        except Exception as exc:
+            return _card(ft.Column(controls=[
+                ft.Text("Manuell verbinden", size=16, weight=ft.FontWeight.W_600, color=TEXT),
+                ft.Text(f"Konfigurationsbeispiele konnten nicht erstellt werden: {exc}", color=BAD, size=11),
+            ], spacing=8), padding=16)
+        cards: list[ft.Control] = []
+        for label, snippet in snippets:
+            client_label, config_path = label.split(" – ", 1)
+            snippet_panel = ft.Container(
+                content=ft.Text(
+                    snippet,
+                    size=10,
+                    color=TEXT,
+                    font_family="Consolas",
+                    selectable=True,
+                ),
+                height=190,
+                padding=12,
+                bgcolor=BG,
+                border=ft.Border.all(1, BORDER),
+                border_radius=8,
+            )
+            copy_button = ft.Button(
+                content="Konfiguration kopieren",
+                icon=_safe_icon("CONTENT_COPY_OUTLINED"),
+                on_click=lambda e, text=snippet: page.run_task(copy_mcp_text, text),
+            )
+            manual_details = ft.Column(
+                controls=[
+                    snippet_panel,
+                    ft.Row(controls=[
+                        copy_button,
+                    ], alignment=ft.MainAxisAlignment.END, spacing=0),
+                ],
+                spacing=0,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            )
+            card = _card(ft.ExpansionTile(
+                title=ft.Text(client_label, size=11, weight=ft.FontWeight.W_600, color=TEXT),
+                subtitle=ft.Text(config_path, size=9, color=SUBTLE, selectable=True),
+                leading=_safe_icon("CONTENT_PASTE_SEARCH"),
+                controls=[manual_details],
+                expanded_cross_axis_alignment=ft.CrossAxisAlignment.STRETCH,
+                controls_padding=ft.Padding.symmetric(horizontal=12, vertical=2),
+                collapsed_text_color=TEXT,
+                text_color=TEXT,
+                collapsed_icon_color=MUTED,
+                icon_color=ACCENT,
+            ), padding=4, bgcolor=PANEL_ALT, border_color=BORDER, radius=12)
+            cards.append(ft.Container(content=card, col={"sm": 12, "md": 6}))
+
+        return _card(ft.Column(controls=[
+            ft.Row(controls=[
+                _icon_tile(_safe_icon("CONTENT_PASTE_SEARCH"), ACCENT, size=38),
+                ft.Column(controls=[
+                    ft.Text("Manuell verbinden", size=16, weight=ft.FontWeight.W_600, color=TEXT),
+                    ft.Text(
+                        "Wähle das passende Format für deinen MCP-Host. Die Konfigurationen sind nicht austauschbar.",
+                        size=11, color=MUTED, selectable=True,
+                    ),
+                ], spacing=4, expand=True),
+            ], spacing=11),
+            ft.ResponsiveRow(
+                controls=cards,
+                columns=12,
+                spacing=12,
+                run_spacing=12,
+            ),
+            ft.Text(
+                "Nach dem Speichern muss der Host gegebenenfalls neu gestartet oder MCP neu geladen werden.",
+                size=10, color=SUBTLE, selectable=True,
+            ),
+        ], spacing=12), padding=16)
+
+    async def mcp_probe_task() -> None:
+        mcp_server_status.value = "MCP-Server wird gestartet und geprüft …"
+        mcp_server_status.color = BLUE
+        page.update()
+        try:
+            tool_count, server_name = await mcp_setup.probe_server()
+            mcp_server_status.value = (
+                f"Start und MCP-Handshake erfolgreich: {server_name}, {tool_count} Werkzeuge. "
+                "Dies bestätigt keine Verbindung eines Desktop-Clients."
+            )
+            mcp_server_status.color = GOOD
+        except Exception as exc:
+            mcp_server_status.value = (
+                f"MCP-Startprüfung fehlgeschlagen: {exc} "
+                "Prüfe MCP-Abhängigkeit, Enargeia-Konfiguration und Neo4j."
+            )
+            mcp_server_status.color = BAD
+            logging.getLogger("winkg.gui").exception("MCP-Startprüfung fehlgeschlagen")
+        page.update()
+
+    async def configure_mcp_client(status: mcp_setup.ClientStatus) -> None:
+        mcp_action_status.value = f"{status.label}: Konfiguration wird aktualisiert …"
+        mcp_action_status.color = BLUE
+        page.update()
+        try:
+            if status.client_id == "codex":
+                backup = await asyncio.to_thread(
+                    mcp_setup.configure_codex, status.config_path
+                )
+            else:
+                backup = await asyncio.to_thread(
+                    mcp_setup.configure_json_client,
+                    status.client_id,
+                    status.config_path,
+                )
+            mcp_backup_state["target"] = status.config_path if backup else None
+            mcp_backup_state["backup"] = backup
+            mcp_restore_button.visible = backup is not None
+            suffix = f" Sicherungskopie: {backup}" if backup else ""
+            mcp_action_status.value = (
+                f"{status.label}: Enargeia wurde eingetragen. Bitte den Client neu starten oder MCP neu laden."
+                f"{suffix}"
+            )
+            mcp_action_status.color = GOOD
+            refresh_mcp_clients()
+        except Exception as exc:
+            mcp_action_status.value = f"{status.label}: Einrichtung fehlgeschlagen: {exc}"
+            mcp_action_status.color = BAD
+            logging.getLogger("winkg.gui").exception(
+                "MCP-Client-Konfiguration fehlgeschlagen (%s)", status.client_id
+            )
+        page.update()
+
+    async def restore_mcp_configuration_task(target: Path, backup: Path) -> None:
+        try:
+            current_backup = await asyncio.to_thread(
+                mcp_setup.restore_configuration_backup, target, backup
+            )
+            mcp_backup_state["target"] = None
+            mcp_backup_state["backup"] = None
+            mcp_restore_button.visible = False
+            mcp_action_status.value = (
+                f"Vorherige Konfiguration wiederhergestellt. Die ersetzte Datei wurde gesichert: "
+                f"{current_backup}"
+            )
+            mcp_action_status.color = GOOD
+            refresh_mcp_clients()
+        except Exception as exc:
+            mcp_action_status.value = f"Konfiguration konnte nicht zurückgesetzt werden: {exc}"
+            mcp_action_status.color = BAD
+            logging.getLogger("winkg.gui").exception(
+                "MCP-Konfiguration konnte nicht zurückgesetzt werden"
+            )
+        page.update()
+
+    def request_restore_mcp_backup() -> None:
+        target = mcp_backup_state["target"]
+        backup = mcp_backup_state["backup"]
+        if target is None or backup is None:
+            return
+        dialog: ft.AlertDialog
+
+        def cancel(_: Any) -> None:
+            _close_dialog_compat(page, dialog)
+
+        def confirm(_: Any) -> None:
+            _close_dialog_compat(page, dialog)
+            page.run_task(restore_mcp_configuration_task, target, backup)
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Vorherige MCP-Konfiguration wiederherstellen?", color=TEXT),
+            content=ft.Text(
+                f"Die Sicherung wird zurück nach {target} kopiert:\n{backup}\n\n"
+                "Die aktuelle Datei wird ebenfalls gesichert. Andere Konfigurationsdateien bleiben unberührt.",
+                size=12, color=TEXT, selectable=True,
+            ),
+            actions=[
+                ft.Button(content="Abbrechen", on_click=cancel),
+                ft.Button(content="Wiederherstellen", on_click=confirm),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        _show_dialog_compat(page, dialog)
+
+    def request_mcp_configuration(status: mcp_setup.ClientStatus) -> None:
+        if status.error:
+            mcp_action_status.value = (
+                f"{status.label}: {status.error} Die vorhandene Konfiguration wurde nicht verändert."
+            )
+            mcp_action_status.color = BAD
+            page.update()
+            return
+        try:
+            config_preview = mcp_setup.client_config(status.client_id)
+            preview = json.dumps(config_preview, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            mcp_action_status.value = f"{status.label}: MCP-Startbefehl nicht verfügbar: {exc}"
+            mcp_action_status.color = BAD
+            page.update()
+            return
+        replacing = status.configured
+        action = "Der vorhandene Enargeia-Eintrag wird ersetzt." if replacing else (
+            "Andere Einträge und Einstellungen in dieser Datei bleiben erhalten."
+        )
+        dialog: ft.AlertDialog
+
+        def cancel(_: Any) -> None:
+            _close_dialog_compat(page, dialog)
+
+        def confirm(_: Any) -> None:
+            _close_dialog_compat(page, dialog)
+            page.run_task(configure_mcp_client, status)
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"{status.label} einrichten?", color=TEXT),
+            content=ft.Column(controls=[
+                ft.Text(
+                    f"Enargeia schreibt den MCP-Eintrag in:\n{status.config_path}\n\n"
+                    f"{action}\nVorhandene Dateien werden vor der Änderung gesichert.",
+                    size=12, color=TEXT, selectable=True,
+                ),
+                ft.Text("Startbefehl und Argumente:", size=11, color=MUTED),
+                ft.Text(preview, size=10, color=TEXT, selectable=True),
+                ft.Text(
+                    "Der Host startet den lokalen MCP-Prozess. Danach kann ein Neustart oder erneutes Laden nötig sein.",
+                    size=11, color=MUTED,
+                ),
+            ], tight=True, scroll=ft.ScrollMode.AUTO, width=560),
+            actions=[
+                ft.Button(content="Abbrechen", on_click=cancel),
+                ft.Button(content="Einrichtung bestätigen", on_click=confirm),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        _show_dialog_compat(page, dialog)
+
+    def show_manual_mcp_hint() -> None:
+        mcp_action_status.value = (
+            "Die passenden Beispiele stehen weiter unten im Bereich „Manuell verbinden“."
+        )
+        mcp_action_status.color = BLUE
+        page.update()
+        mcp_page = mcp_page_ref["control"]
+        if mcp_page is not None:
+            page.run_task(mcp_page.scroll_to, delta=100000, duration=300)
+
+    def request_mcpb_install(status: mcp_setup.ClientStatus) -> None:
+        bundle = _mcp_bundle_path()
+        if not bundle.is_file():
+            mcp_action_status.value = (
+                f"Claude Desktop-Erweiterung nicht gefunden: {bundle}. "
+                "Nutze die JSON-Konfiguration oder installiere Enargeia erneut."
+            )
+            mcp_action_status.color = WARN
+            page.update()
+            return
+        dialog: ft.AlertDialog
+
+        def cancel(_: Any) -> None:
+            _close_dialog_compat(page, dialog)
+
+        def open_bundle(_: Any) -> None:
+            _close_dialog_compat(page, dialog)
+            try:
+                os.startfile(str(bundle))
+                mcp_action_status.value = (
+                    "Die Enargeia-MCP-Erweiterung wurde an Claude Desktop übergeben. "
+                    "Prüfe dort die angezeigten Details und bestätige die Installation."
+                )
+                mcp_action_status.color = GOOD
+            except OSError as exc:
+                mcp_action_status.value = f"Erweiterung konnte nicht geöffnet werden: {exc}"
+                mcp_action_status.color = BAD
+            page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Claude Desktop-Erweiterung öffnen?", color=TEXT),
+            content=ft.Text(
+                f"Enargeia öffnet das MCP-Bundle:\n{bundle}\n\n"
+                "Die Installation erfolgt anschließend in Claude Desktop. "
+                "Claude zeigt dort die Serverdatei und angeforderten Werkzeuge an; "
+                "prüfe diese Angaben vor der Bestätigung.",
+                size=12, color=TEXT, selectable=True,
+            ),
+            actions=[
+                ft.Button(content="Abbrechen", on_click=cancel),
+                ft.Button(content="Bundle öffnen", on_click=open_bundle),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        _show_dialog_compat(page, dialog)
+
+    def refresh_mcp_clients() -> None:
+        try:
+            statuses = mcp_setup.discover_clients()
+            controls: list[ft.Control] = []
+            bundle_exists = _mcp_bundle_path().is_file()
+            for status in statuses:
+                detected_label = "Client erkannt" if status.detected else "Client nicht erkannt"
+                detected_color = GOOD if status.detected else WARN
+                configured_label = (
+                    "Enargeia konfiguriert" if status.configured else "Einrichtung erforderlich"
+                )
+                configured_color = GOOD if status.configured else MUTED
+                if status.client_id == "claude" and bundle_exists and not status.configured:
+                    configured_label = "MCPB-Status in Claude Desktop prüfen"
+                    configured_color = BLUE
+                actions: list[ft.Control] = []
+                if status.detected:
+                    if status.client_id == "claude" and bundle_exists:
+                        actions.append(ft.Button(
+                            content="Claude Desktop-Erweiterung installieren",
+                            icon=_safe_icon("INSTALL_DESKTOP_OUTLINED"),
+                            on_click=lambda e, s=status: request_mcpb_install(s),
+                        ))
+                        if not status.error and mcp_runtime_ready:
+                            actions.append(ft.Button(
+                                content="JSON-Fallback",
+                                on_click=lambda e, s=status: request_mcp_configuration(s),
+                            ))
+                    elif not status.error and mcp_runtime_ready:
+                        actions.append(ft.Button(
+                            content="Erneut einrichten" if status.configured else "Einrichten",
+                            icon=_safe_icon("ADD_LINK_OUTLINED"),
+                            on_click=lambda e, s=status: request_mcp_configuration(s),
+                        ))
+                    elif not mcp_runtime_ready:
+                        actions.append(ft.Text(
+                            "MCP-Laufzeit fehlt; Client-Konfiguration bleibt unverändert.",
+                            size=10, color=WARN,
+                        ))
+                elif not status.detected:
+                    actions.append(ft.Button(
+                        content="Manuelle Anleitung",
+                        icon=_safe_icon("CONTENT_COPY_OUTLINED"),
+                        on_click=lambda e: show_manual_mcp_hint(),
+                    ))
+                controls.append(_card(ft.Column(controls=[
+                    ft.Row(controls=[
+                        _icon_tile(_safe_icon({
+                            "codex": "AUTO_AWESOME_OUTLINED",
+                            "claude": "PSYCHOLOGY_OUTLINED",
+                            "copilot": "CODE_OUTLINED",
+                        }[status.client_id]), ACCENT, size=38),
+                        ft.Column(controls=[
+                            ft.Text(status.label, size=15, weight=ft.FontWeight.W_600, color=TEXT),
+                            ft.Text(status.detail, size=10, color=MUTED, selectable=True),
+                        ], spacing=3, expand=True),
+                    ], spacing=10),
+                    ft.Row(controls=[
+                        _status_pill(detected_label, detected_color),
+                        _status_pill(configured_label, configured_color),
+                    ], spacing=7, wrap=True),
+                    ft.Row(controls=actions, spacing=8, wrap=True) if actions else ft.Container(),
+                ], spacing=8), padding=13, bgcolor=PANEL_ALT))
+            mcp_client_cards.controls = controls
+        except Exception as exc:
+            mcp_client_cards.controls = [
+                ft.Text(f"MCP-Clients konnten nicht erkannt werden: {exc}", color=BAD, size=11)
+            ]
+            logging.getLogger("winkg.gui").exception("MCP-Client-Erkennung fehlgeschlagen")
+        page.update()
+
+    def build_mcp_view() -> ft.Control:
+        mcp_manual_section = build_mcp_manual_section()
+        mcp_tools = [
+            (
+                "search_knowledge", "Wissenssuche",
+                "Durchsucht indexierte Dateien hybrid nach Begriffen und Bedeutung. Liefert passende Textauszüge und Quellenpfade.",
+                "Lesen", GOOD,
+            ),
+            (
+                "global_search_knowledge", "Korpusweite Suche",
+                "Beantwortet Fragen über den gesamten Wissensbestand mit gespeicherten Zusammenfassungen und konkreten Quellabschnitten.",
+                "Lesen", GOOD,
+            ),
+            (
+                "get_file_context", "Dateikontext abrufen",
+                "Liefert Metadaten und extrahierte Textabschnitte zu einem absoluten oder root-relativen Dateipfad.",
+                "Lesen", GOOD,
+            ),
+            (
+                "find_related_files", "Verwandte Dateien finden",
+                "Findet Dateien, die über extrahierte Entitäten im Knowledge Graph mit einer Datei verbunden sind.",
+                "Lesen", GOOD,
+            ),
+            (
+                "get_graph_stats", "Graph-Statistik abrufen",
+                "Zeigt die Anzahl der Roots, Ordner, Dateien, Text-Chunks und Entitäten im Knowledge Graph.",
+                "Lesen", GOOD,
+            ),
+            (
+                "get_graph_capabilities", "Graph-Fähigkeiten anzeigen",
+                "Zeigt Neo4j-Version, vorhandene Indizes und verfügbare Graph-Data-Science-Algorithmen.",
+                "Lesen", GOOD,
+            ),
+            (
+                "analyze_knowledge_graph", "Knowledge Graph analysieren",
+                "Erkennt unter anderem Duplikate, Abdeckungslücken, isolierte Entitäten und Beziehungskandidaten. Speichert Analyse-Läufe und Befunde, macht Vorschläge aber nicht automatisch zu Fakten.",
+                "Schreibt Analysebefunde", WARN,
+            ),
+            (
+                "list_graph_link_candidates", "Beziehungsvorschläge auflisten",
+                "Listet Beziehungskandidaten mit Belegen und Prüfstatus auf; veraltete offene Vorschläge sind standardmäßig ausgeblendet.",
+                "Lesen", GOOD,
+            ),
+            (
+                "review_graph_link_candidate", "Beziehungsvorschlag bewerten",
+                "Nimmt einen Vorschlag an, verwirft oder verschiebt ihn. Die Bewertung ändert den Prüfstatus; angenommene Vorschläge werden als quellengebundene Aussage gespeichert.",
+                "Ändert Prüfstatus", BAD,
+            ),
+            (
+                "list_graph_assertions", "Graph-Aussagen auflisten",
+                "Listet quellengebundene Aussagen aus Neo4j samt Status, Prädikat, Methode und Quellenhinweisen auf.",
+                "Lesen", GOOD,
+            ),
+            (
+                "get_graph_insights", "Analysebefunde abrufen",
+                "Liefert gespeicherte Analysebefunde mit Begründung und strukturierten Details, optional gefiltert nach Analyse-Lauf.",
+                "Lesen", GOOD,
+            ),
+            (
+                "get_files_needing_deep_analysis", "Dateien für Tiefenanalyse finden",
+                "Listet große Dateien (nur Metadaten) und Dateien, deren Inhalte beim Indexieren gekürzt wurden.",
+                "Lesen", GOOD,
+            ),
+        ]
+        tool_cards = [
+            ft.Container(
+                content=_card(ft.Column(controls=[
+                    ft.Row(controls=[
+                        ft.Text(title, size=12, weight=ft.FontWeight.W_600, color=TEXT),
+                        _status_pill(access, access_color),
+                    ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True),
+                    ft.Text(tool_name, size=9, color=SUBTLE, selectable=True),
+                    ft.Text(description, size=10, color=MUTED, selectable=True),
+                ], spacing=7), padding=12, bgcolor=PANEL_ALT, border_color=BORDER, radius=10),
+                col={"sm": 12, "md": 6},
+            )
+            for tool_name, title, description, access, access_color in mcp_tools
+        ]
+        tools_panel = _card(ft.Column(controls=[
+            ft.Text("Werkzeuge und Zugriffsarten", size=16, weight=ft.FontWeight.W_600, color=TEXT),
+            ft.Text(
+                "Alle zwölf MCP-Werkzeuge im Überblick. Lesezugriffe können private Textauszüge und Quellpfade zurückgeben.",
+                size=11, color=MUTED, selectable=True,
+            ),
+            ft.ResponsiveRow(
+                controls=tool_cards,
+                columns=12,
+                spacing=10,
+                run_spacing=10,
+            ),
+            ft.Text(
+                "Werkzeugfreigaben und Rückfragen hängen vom jeweiligen MCP-Client ab. "
+                "Prüfe dessen Bestätigungs- und Berechtigungseinstellungen.",
+                size=10, color=MUTED, selectable=True,
+            ),
+        ], spacing=10), padding=16)
+
+        intro_panel = _card(ft.Column(controls=[
+            ft.Row(controls=[
+                _icon_tile(_safe_icon("CABLE_OUTLINED"), ACCENT, size=42),
+                ft.Column(controls=[
+                    _eyebrow("MODEL CONTEXT PROTOCOL"),
+                    ft.Text("Enargeia mit deinem MCP-Client verbinden", size=17, weight=ft.FontWeight.W_600, color=TEXT),
+                    ft.Text(
+                        "Ein lokaler stdio-Server stellt Enargeias Wissensgraph als Werkzeuge bereit. "
+                        "Der jeweilige Client startet und verwaltet den Serverprozess.",
+                        size=11, color=MUTED, selectable=True,
+                    ),
+                ], spacing=4, expand=True),
+            ], spacing=12),
+            ft.Divider(color=BORDER),
+            ft.Row(controls=[
+                ft.Button(
+                    content="Serverstart und Werkzeuge prüfen",
+                    icon=_safe_icon("PLAY_ARROW_ROUNDED"),
+                    on_click=lambda e: page.run_task(mcp_probe_task),
+                ),
+                ft.Button(
+                    content="Clientstatus aktualisieren",
+                    icon=_safe_icon("REFRESH_ROUNDED"),
+                    on_click=lambda e: refresh_mcp_clients(),
+                ),
+                mcp_restore_button,
+            ], spacing=8, wrap=True),
+            mcp_server_status,
+            mcp_action_status,
+        ], spacing=10), padding=16)
+        clients_panel = _card(ft.Column(controls=[
+            ft.Text("MCP-Client einrichten", size=16, weight=ft.FontWeight.W_600, color=TEXT),
+            ft.Text(
+                "Vor einer Änderung zeigt Enargeia Client, Ziel und Startbefehl. "
+                "Bestehende Dateien werden gesichert; andere Client-Einträge bleiben erhalten. "
+                "Nach dem Setup kann ein Client-Neustart erforderlich sein.",
+                size=11, color=MUTED, selectable=True,
+            ),
+            mcp_client_cards,
+        ], spacing=10), padding=16)
+        mcp_page = ft.Column(
+            controls=[intro_panel, clients_panel, tools_panel, mcp_manual_section],
+            spacing=12,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+        mcp_page_ref["control"] = mcp_page
+        return mcp_page
+
     # ---------------- Connection view ----------------
     def open_env_file(_: Any) -> None:
         """Open the guided setup wizard instead of exposing raw configuration to users."""
@@ -1607,27 +2179,6 @@ def main(page: ft.Page) -> None:
             ft.Button(content="Setup-Assistent öffnen", icon=_safe_icon("EDIT_NOTE_OUTLINED"), on_click=open_env_file),
         ], spacing=8), padding=18)
 
-        mcp_panel = _card(ft.Column(controls=[
-            ft.Row(controls=[
-                _icon_tile(_safe_icon("CABLE_OUTLINED"), ACCENT, size=42),
-                ft.Column(controls=[
-                    _eyebrow("EXTERNAL ACCESS"),
-                    ft.Text("MCP für externe LLMs", size=16, weight=ft.FontWeight.W_600, color=TEXT),
-                    ft.Text("Der MCP-Prozess wird vom jeweiligen MCP-Client gestartet.", size=11, color=MUTED),
-                ], spacing=4, expand=True),
-            ], spacing=12),
-            ft.Divider(color=BORDER),
-            ft.Row(controls=[
-                _status_pill("Transport: stdio", BLUE),
-                _status_pill("Clientstatus nicht direkt ermittelbar", WARN),
-            ], wrap=True, spacing=8),
-            ft.Text(
-                "Die Werkzeuge bieten Suche, Kontextzugriff, Graph-Statistiken, Analysefunktionen, "
-                "Beziehungsvorschläge und Quelleninformationen. Die Desktop-GUI enthält keine Chat-Oberfläche.",
-                size=11, color=MUTED, selectable=True,
-            ),
-        ], spacing=12), padding=18)
-
         def test_card(key: str, title: str, description: str, icon: str) -> ft.Control:
             controls: list[ft.Control] = [
                 ft.Row(controls=[
@@ -1683,7 +2234,7 @@ def main(page: ft.Page) -> None:
         ], spacing=9), padding=12)
         top_row = ft.Row(controls=[
             ft.Container(content=config_panel, expand=7),
-            ft.Container(content=ft.Column(controls=[health_panel, mcp_panel], spacing=10), expand=5),
+            ft.Container(content=health_panel, expand=5),
         ], spacing=14, vertical_alignment=ft.CrossAxisAlignment.START)
         return ft.Column(controls=[top_row], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
@@ -1694,6 +2245,7 @@ def main(page: ft.Page) -> None:
         "graph": build_graph_view,
         "quality": build_quality_view,
         "intelligence": build_graph_intelligence_view,
+        "mcp": build_mcp_view,
         "connection": build_connection_view,
     }
     # Each page owns several long-lived Flet controls (logs, statuses and result
@@ -1707,7 +2259,8 @@ def main(page: ft.Page) -> None:
         "graph": ("Graph Explorer", "Knoten, Kanten und Quellenbeziehungen inspizieren"),
         "quality": ("Qualität & Beziehungen", "Evidenz prüfen und Vorschläge kontrolliert entscheiden"),
         "intelligence": ("Graph-Analysen", "Graph-Qualität und Struktur mit Cypher und GDS untersuchen"),
-        "connection": ("System & MCP", "Verbindungen, Konfiguration und externe LLM-Anbindung"),
+        "mcp": ("MCP-Integration", "Enargeia sicher mit Codex, Claude und Copilot verbinden"),
+        "connection": ("System & Konfiguration", "Verbindungen, Laufzeit und Projektkonfiguration prüfen"),
     }
     nav_items = [
         ("dashboard", "Übersicht", "COMMAND", ft.Icons.DASHBOARD_OUTLINED),
@@ -1715,7 +2268,8 @@ def main(page: ft.Page) -> None:
         ("graph", "Graph Explorer", "KNOWLEDGE BASE", ft.Icons.HUB_OUTLINED),
         ("quality", "Qualität & Beziehungen", "INTELLIGENCE", ft.Icons.LINK_OUTLINED),
         ("intelligence", "Graph-Analysen", "INTELLIGENCE", ft.Icons.INSIGHTS_OUTLINED),
-        ("connection", "System & MCP", "SYSTEM", ft.Icons.SETTINGS_OUTLINED),
+        ("mcp", "MCP-Integration", "INTEGRATIONS", _safe_icon("CABLE_OUTLINED")),
+        ("connection", "System & Konfiguration", "SYSTEM", ft.Icons.SETTINGS_OUTLINED),
     ]
     nav_tiles: dict[str, tuple[ft.Container, ft.Container, ft.Icon, ft.Text]] = {}
 
@@ -1737,11 +2291,13 @@ def main(page: ft.Page) -> None:
             label_control.color = TEXT if active else MUTED
             label_control.weight = ft.FontWeight.W_600 if active else ft.FontWeight.NORMAL
         page.update()
+        if key == "mcp":
+            refresh_mcp_clients()
         if key == "quality":
             page.run_task(graph_candidates_task)
 
     nav_controls: list[ft.Control] = []
-    section_for_key = {"dashboard": "COMMAND", "scan": "KNOWLEDGE BASE", "graph": "KNOWLEDGE BASE", "quality": "INTELLIGENCE", "intelligence": "INTELLIGENCE", "connection": "SYSTEM"}
+    section_for_key = {"dashboard": "COMMAND", "scan": "KNOWLEDGE BASE", "graph": "KNOWLEDGE BASE", "quality": "INTELLIGENCE", "intelligence": "INTELLIGENCE", "mcp": "INTEGRATIONS", "connection": "SYSTEM"}
     previous_section = None
     for nav_key, nav_label, section, nav_icon in nav_items:
         if section != previous_section:
@@ -1795,7 +2351,7 @@ def main(page: ft.Page) -> None:
             ft.Column(controls=[_eyebrow("ENARGEIA", SUBTLE), header_title, header_subtitle], spacing=3, expand=True),
             ft.Container(content=ft.Row(controls=[header_status_dot, global_status], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER), bgcolor=PANEL_ALT, border=ft.Border.all(1, BORDER), border_radius=20, padding=ft.Padding.symmetric(horizontal=12, vertical=8)),
             ft.IconButton(icon=_safe_icon("REFRESH_ROUNDED"), tooltip="Graph-Bestand aktualisieren", icon_color=ACCENT, on_click=lambda e: page.run_task(load_dashboard_task)),
-            ft.IconButton(icon=ft.Icons.SETTINGS_OUTLINED, tooltip="System & MCP", icon_color=MUTED, on_click=lambda e: navigate("connection")),
+            ft.IconButton(icon=ft.Icons.SETTINGS_OUTLINED, tooltip="System & Konfiguration", icon_color=MUTED, on_click=lambda e: navigate("connection")),
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=14),
     )
     main_area = ft.Column(controls=[header, view_host], spacing=0, expand=True)
@@ -1940,4 +2496,3 @@ def main(page: ft.Page) -> None:
 
 if __name__ == "__main__":
     ft.run(main)
-

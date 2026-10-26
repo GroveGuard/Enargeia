@@ -8,7 +8,7 @@ Die Anwendung wird während der Entwicklung direkt aus `src/` gestartet. PyInsta
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 -Command setup
 ```
 
-Alternativ kann `setup_windows.bat` verwendet werden. Die Entwicklungsumgebung liegt in `.venv`; die Paketinstallation ist editierbar (`pip install -e .`).
+Alternativ kann `setup_windows.bat` verwendet werden. Die Entwicklungsumgebung liegt in `.venv`; die editierbare Entwicklungsinstallation (`pip install -e '.[dev]'`) enthält Docling, das über `USE_DOCLING=true` aktiviert werden kann.
 
 ## Entwickeln und testen
 
