@@ -50,6 +50,18 @@ def test_windows_build_installs_and_bundles_docling():
     assert "from docling.document_converter import DocumentConverter" in helper
     assert "import rapidocr" in helper
     assert 'Path(rapidocr.__file__).resolve().parent / "default_models.yaml"' in helper
+    assert "from transformers import AutoImageProcessor, AutoModelForObjectDetection" in helper
+    assert "RTDetrImageProcessor" in helper
+    assert "RTDetrV2ForObjectDetection" in helper
+    for module in (
+        "transformers.models.auto.image_processing_auto",
+        "transformers.models.rt_detr.image_processing_rt_detr",
+        "transformers.models.auto.configuration_auto",
+        "transformers.models.rt_detr_v2.configuration_rt_detr_v2",
+        "transformers.models.rt_detr_v2.modeling_rt_detr_v2",
+    ):
+        assert f"'--hidden-import','{module}'" in script
+        assert f"'{module}'" in spec
     assert "latex2mathml_data" in helper
     assert 'version("docling")' in helper
 

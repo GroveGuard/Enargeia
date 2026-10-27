@@ -17,6 +17,10 @@ def main() -> int:
         import rapidocr
         import latex2mathml
         import docling
+        from transformers import AutoImageProcessor, AutoModelForObjectDetection
+        from transformers.models.rt_detr.image_processing_rt_detr import RTDetrImageProcessor
+        from transformers.models.rt_detr_v2.configuration_rt_detr_v2 import RTDetrV2Config
+        from transformers.models.rt_detr_v2.modeling_rt_detr_v2 import RTDetrV2ForObjectDetection
         from fastembed import TextEmbedding
         from docling.document_converter import DocumentConverter
 
@@ -35,6 +39,13 @@ def main() -> int:
             raise RuntimeError(f"ONNX Runtime CPU provider is unavailable: {providers}")
         _ = TextEmbedding
         _ = DocumentConverter
+        _ = (
+            AutoImageProcessor,
+            AutoModelForObjectDetection,
+            RTDetrImageProcessor,
+            RTDetrV2Config,
+            RTDetrV2ForObjectDetection,
+        )
         layout_data = (
             Path(pymupdf.__file__).resolve().parent
             / "layout" / "resources" / "onnx" / "layout_rf2.4.1+imf1.yaml"
@@ -73,6 +84,7 @@ def main() -> int:
         print(f"Flet: {flet_version}; Image.fit uses BoxFit.CONTAIN")
         print(f"Flet desktop: {desktop_version} ({flet_desktop.__file__})")
         print(f"Docling: {docling_version} ({docling.__file__})")
+        print("Docling RT-DETR image processor and model imports: OK")
         print(f"Hugging Face Hub: {hub_version} (FastEmbed-compatible cache layout)")
         print(f"FastEmbed: {fastembed_version} ({fastembed.__file__})")
         print(f"ONNX Runtime: {onnxruntime.__version__}")

@@ -265,8 +265,13 @@ def _docling_extract(path: Path) -> str | None:
         log.info("Docling-Konvertierung %s: %.1f s", path.name, time.monotonic() - started)
         return result.document.export_to_markdown()
     except Exception as exc:
-        log.warning("Docling konnte %s nicht extrahieren: %s; verwende Standardparser.", path, exc)
-        return None
+        log.warning(
+            "Docling konnte %s nicht extrahieren: %s; verwende Standardparser.",
+            path,
+            exc,
+            exc_info=True,
+        )
+    return None
 
 
 def extract_text(path: Path, raw: bytes, settings: Settings) -> str:
