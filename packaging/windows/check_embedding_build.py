@@ -13,6 +13,8 @@ def main() -> int:
         import flet_desktop
         import onnxruntime
         import fastembed
+        import torch
+        import torchvision
         import pymupdf
         import rapidocr
         import latex2mathml
@@ -23,6 +25,7 @@ def main() -> int:
         from transformers.models.rt_detr_v2.modeling_rt_detr_v2 import RTDetrV2ForObjectDetection
         from fastembed import TextEmbedding
         from docling.document_converter import DocumentConverter
+        from torchvision.ops import nms
 
         expected = "1.23.0"
         fastembed_version = version("fastembed")
@@ -46,6 +49,11 @@ def main() -> int:
             RTDetrV2Config,
             RTDetrV2ForObjectDetection,
         )
+        nms(
+            torch.empty((0, 4), dtype=torch.float32),
+            torch.empty((0,), dtype=torch.float32),
+            0.5,
+        )
         layout_data = (
             Path(pymupdf.__file__).resolve().parent
             / "layout" / "resources" / "onnx" / "layout_rf2.4.1+imf1.yaml"
@@ -62,6 +70,13 @@ def main() -> int:
         )
         if not rapidocr_models.is_file():
             raise RuntimeError(f"RapidOCR model configuration is missing: {rapidocr_models}")
+        torchvision_ops = tuple(
+            Path(torchvision.__file__).resolve().parent.glob("_C*.pyd")
+        )
+        if not torchvision_ops:
+            raise RuntimeError(
+                "Torchvision native operator library (_C*.pyd) is missing"
+            )
         flet_version = version("flet")
         if flet_version != "1.0.5":
             raise RuntimeError(
@@ -85,6 +100,11 @@ def main() -> int:
         print(f"Flet desktop: {desktop_version} ({flet_desktop.__file__})")
         print(f"Docling: {docling_version} ({docling.__file__})")
         print("Docling RT-DETR image processor and model imports: OK")
+        print(
+            f"Torch/Torchvision: {version('torch')}/{version('torchvision')}; "
+            f"native operator library: {', '.join(path.name for path in torchvision_ops)}; "
+            "NMS operator: OK"
+        )
         print(f"Hugging Face Hub: {hub_version} (FastEmbed-compatible cache layout)")
         print(f"FastEmbed: {fastembed_version} ({fastembed.__file__})")
         print(f"ONNX Runtime: {onnxruntime.__version__}")

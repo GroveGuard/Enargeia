@@ -29,6 +29,15 @@ $EmbeddingPreflight = Join-Path $PSScriptRoot 'check_embedding_build.py'
 & $Python $EmbeddingPreflight
 if ($LASTEXITCODE -ne 0) { throw 'FastEmbed/ONNX Runtime/Docling dependency preflight failed; see the error above.' }
 
+$TorchvisionOps = @(
+  & $Python -c "from pathlib import Path; import torchvision; print('\n'.join(str(path) for path in Path(torchvision.__file__).resolve().parent.glob('_C*.pyd')))"
+)
+if ($LASTEXITCODE -ne 0) { throw 'Could not locate the native Torchvision operator library.' }
+$TorchvisionOps = @($TorchvisionOps | Where-Object { $_ -and (Test-Path $_) })
+if ($TorchvisionOps.Count -eq 0) {
+  throw 'Torchvision has no native _C*.pyd operator library; refusing to build an application with a broken Docling runtime.'
+}
+
 $Dist = Join-Path $ProjectRoot 'dist'
 $Build = Join-Path $ProjectRoot 'build\pyinstaller'
 Remove-Item -Recurse -Force $Dist -ErrorAction SilentlyContinue
@@ -64,10 +73,33 @@ $GuiArgs = $Common + @(
   '--distpath',$Dist,'--workpath',(Join-Path $Build 'gui'),
   'packaging/windows/entry_gui.py'
 )
+foreach ($TorchvisionOp in $TorchvisionOps) {
+  $GuiArgs += @('--add-binary', "$TorchvisionOp;torchvision")
+}
 & $Python -m PyInstaller @GuiArgs
 if ($LASTEXITCODE -ne 0) { throw 'GUI build failed.' }
 
 $AppBundle = Join-Path $Dist 'Enargeia'
+$BundledTorchvisionOps = @(
+  Get-ChildItem -Path $AppBundle -File -Filter '_C*.pyd' -Recurse -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty Name -Unique
+)
+$MissingTorchvisionOps = @(
+  $TorchvisionOps |
+    ForEach-Object { [System.IO.Path]::GetFileName($_) } |
+    Where-Object { $_ -notin $BundledTorchvisionOps }
+)
+if ($MissingTorchvisionOps.Count -gt 0) {
+  throw "Generated GUI bundle is missing native Torchvision operator file(s): $($MissingTorchvisionOps -join ', '). Installer will not be created."
+}
+Write-Host "Torchvision native operator file(s) verified in bundle: $($BundledTorchvisionOps -join ', ')" -ForegroundColor Green
+$GuiExecutable = Join-Path $AppBundle 'Enargeia.exe'
+& $GuiExecutable '--check-torchvision-runtime'
+if ($LASTEXITCODE -ne 0) {
+  throw "Frozen Torchvision NMS smoke test failed with exit code $LASTEXITCODE. Installer will not be created."
+}
+Write-Host 'Frozen Torchvision NMS smoke test passed.' -ForegroundColor Green
+
 $RequiredOnnxFiles = @('onnxruntime_pybind11_state.pyd','onnxruntime.dll','onnxruntime_providers_shared.dll')
 
 # PyInstaller 6 places collected runtime files in the _internal directory by

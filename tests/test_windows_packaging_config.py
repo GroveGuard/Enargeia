@@ -38,6 +38,16 @@ def test_windows_build_installs_and_bundles_docling():
     assert ".[gui,local-embeddings,package,docling,mcp]" in script
     for package in ("docling", "docling_core", "docling_parse", "docling_ibm_models"):
         assert f"'--collect-all','{package}'" in script
+    assert "'--collect-all','torchvision'" not in script
+    assert "'--hidden-import','torchvision._C'" not in script
+    assert "glob('_C*.pyd')" in script
+    assert "'--add-binary', \"$TorchvisionOp;torchvision\"" in script
+    assert "missing native Torchvision operator file(s)" in script
+    assert "--check-torchvision-runtime" in script
+    entry = (ROOT / "packaging/windows/entry_gui.py").read_text(encoding="utf-8")
+    assert "def check_torchvision_runtime() -> None:" in entry
+    assert "selected = nms(boxes, scores, 0.5).tolist()" in entry
+    assert "Torchvision NMS returned unexpected results" in entry
     assert "'--collect-all','latex2mathml'" in script
     assert "unimathsymbols.txt" in script
     assert "collect_all('latex2mathml')" in spec
@@ -53,6 +63,11 @@ def test_windows_build_installs_and_bundles_docling():
     assert "from transformers import AutoImageProcessor, AutoModelForObjectDetection" in helper
     assert "RTDetrImageProcessor" in helper
     assert "RTDetrV2ForObjectDetection" in helper
+    assert "import torchvision" in helper
+    assert "from torchvision.ops import nms" in helper
+    assert 'glob("_C*.pyd")' in helper
+    assert "NMS operator: OK" in helper
+    assert "collect_dynamic_libs('torchvision', search_patterns=['_C*.pyd'])" in spec
     for module in (
         "transformers.models.auto.image_processing_auto",
         "transformers.models.rt_detr.image_processing_rt_detr",
