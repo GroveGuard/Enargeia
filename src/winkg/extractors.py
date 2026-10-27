@@ -5,6 +5,7 @@ import email
 import io
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -16,11 +17,31 @@ from typing import Any
 from charset_normalizer import from_bytes
 
 from .config import Settings
+from .huggingface_cache import (
+    disable_huggingface_cache_symlinks,
+    materialize_huggingface_cache_symlinks,
+)
 
 log = logging.getLogger(__name__)
 _docling_converter: Any | None = None
 _DOCLING_CONVERTER_LOCK = threading.Lock()
 _DOCLING_CONVERSION_LOCK = threading.Lock()
+
+
+def _prepare_docling_model_cache() -> None:
+    if os.name != "nt":
+        return
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    cache_dir = Path(HF_HUB_CACHE)
+    materialized = materialize_huggingface_cache_symlinks(cache_dir)
+    disable_huggingface_cache_symlinks(cache_dir)
+    if materialized:
+        log.info(
+            "Windows-Hugging-Face-Cache für Docling vorbereitet: %d Symlinks durch Kopien ersetzt",
+            materialized,
+        )
+
 
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".markdown", ".rst", ".adoc", ".tex", ".log", ".ini",
@@ -231,6 +252,7 @@ def _docling_extract(path: Path) -> str | None:
         if _docling_converter is None:
             with _DOCLING_CONVERTER_LOCK:
                 if _docling_converter is None:
+                    _prepare_docling_model_cache()
                     started = time.monotonic()
                     _docling_converter = DocumentConverter()
                     log.info(

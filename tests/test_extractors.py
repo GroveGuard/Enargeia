@@ -54,7 +54,7 @@ def test_docling_converter_is_reused_between_documents(monkeypatch, tmp_path):
 
     class FakeConverter:
         def __init__(self):
-            constructions.append(1)
+            constructions.append("converter")
 
         def convert(self, path):
             converted.append(path)
@@ -71,12 +71,17 @@ def test_docling_converter_is_reused_between_documents(monkeypatch, tmp_path):
 
     monkeypatch.setattr(builtins, "__import__", import_with_fake_docling)
     monkeypatch.setattr(extractors, "_docling_converter", None)
+    monkeypatch.setattr(
+        extractors,
+        "_prepare_docling_model_cache",
+        lambda: constructions.append("cache"),
+    )
 
     first = str(tmp_path / "first.pdf")
     second = str(tmp_path / "second.pdf")
     assert _docling_extract(Path(first)) == first
     assert _docling_extract(Path(second)) == second
-    assert len(constructions) == 1
+    assert constructions == ["cache", "converter"]
     assert converted == [first, second]
 
 
