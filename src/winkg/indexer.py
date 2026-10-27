@@ -79,6 +79,7 @@ class DirectoryIndexer:
             "entity_cache_hits": 0,
             "entity_cache_misses": 0,
             "entity_llm_calls": 0,
+            "entity_extraction_retry_files": 0,
             "skipped_sensitive": snapshot.skipped_sensitive,
             "scan_errors": snapshot.skipped_errors,
             "deleted_files": 0,
@@ -104,6 +105,12 @@ class DirectoryIndexer:
                 and int(old.get("mtime_ns") or -1) == candidate.mtime_ns
             )
             retry_failed = old is not None and old.get("status") in {"embedding_missing", "extraction_error"}
+            retry_entity_extraction = (
+                do_entity_extraction
+                and old is not None
+                and int(old.get("chunks_count") or 0) > 0
+                and old.get("entity_extraction_pending") is not False
+            )
             old_chunk_count = int(old.get("chunks_count") or 0) if old else 0
             previously_truncated = bool(old.get("needs_deep_analysis")) if old else False
             exceeds_new_cap = old is not None and old_chunk_count > self.settings.max_chunks_per_file
@@ -112,7 +119,7 @@ class DirectoryIndexer:
                 and previously_truncated
                 and old_chunk_count < self.settings.max_chunks_per_file
             )
-            if same_metadata and not force and not retry_failed and not exceeds_new_cap and not cap_increased:
+            if same_metadata and not force and not retry_failed and not retry_entity_extraction and not exceeds_new_cap and not cap_increased:
                 stats["unchanged"] += 1
                 if bool(old.get("needs_deep_analysis")):
                     stats["truncated_files"] += 1
@@ -125,6 +132,10 @@ class DirectoryIndexer:
                     log.info("Fortschritt %d/%d Dateien | neu/aktualisiert: %d | unverändert: %d | Chunks: %d | Ø %.2f Dateien/s | Rest ca. %.1f min",
                              number, total, stats["indexed"], stats["unchanged"], stats["chunks"], rate, eta_seconds / 60)
                 continue
+
+            if retry_entity_extraction:
+                stats["entity_extraction_retry_files"] += 1
+                log.info("Wiederhole fehlgeschlagene Entity-Extraktion für %s", candidate.relative_path)
 
             metadata: dict[str, Any] = {
                 "size": candidate.size,
@@ -142,6 +153,11 @@ class DirectoryIndexer:
                 "truncation_reason": "",
                 "original_text_chars": 0,
                 "indexed_text_chars": 0,
+                "entity_extraction_pending": (
+                    False if do_entity_extraction
+                    else old.get("entity_extraction_pending") if old is not None
+                    else None
+                ),
             }
             chunk_rows: list[dict[str, Any]] = []
             entity_payloads: list[tuple[str, dict[str, Any]]] = []
@@ -215,6 +231,7 @@ class DirectoryIndexer:
                                 embedded_count = 0
                                 for batch_number, start in enumerate(range(0, len(text_chunks), batch_size), start=1):
                                     if cancel_event is not None and cancel_event.is_set():
+                                        metadata["entity_extraction_pending"] = True
                                         break
                                     batch = text_chunks[start:start + batch_size]
                                     batch_started = time.monotonic()
@@ -335,6 +352,7 @@ class DirectoryIndexer:
                                     }
                                     entity_payloads.append((chunk_row["id"], result))
                                 except Exception as exc:
+                                    metadata["entity_extraction_pending"] = True
                                     response = getattr(exc, "response", None)
                                     if getattr(response, "status_code", None) == 429:
                                         entity_rate_limited = True
@@ -342,11 +360,15 @@ class DirectoryIndexer:
                                         break
                                     log.warning("Entity-Extraktion fehlgeschlagen (%s, Chunk %s): %s",
                                                 candidate.relative_path, chunk_row["props"]["ordinal"], exc)
+                            if entity_rate_limited and chunk_rows:
+                                metadata["entity_extraction_pending"] = True
                             if pending_cache_entries:
                                 try:
                                     self.store.save_entity_extraction_cache_many(list(pending_cache_entries.values()))
                                 except Exception as exc:
                                     log.warning("Entity-Ergebnisse konnten nicht im Neo4j-Cache gespeichert werden: %s", exc)
+                        elif do_entity_extraction and chunk_rows and entity_rate_limited:
+                            metadata["entity_extraction_pending"] = True
 
             except (OSError, ValueError, RuntimeError) as exc:
                 metadata["status"] = "extraction_error"

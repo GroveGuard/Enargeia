@@ -91,8 +91,8 @@ def test_graph_snapshot_uses_unrestricted_node_and_relationship_queries():
 def test_3d_viewer_supports_clearing_selection_and_starts_unselected():
     html = Path(__file__).parents[1] / "src" / "winkg" / "ui" / "graph3d.html"
     source = html.read_text(encoding="utf-8")
-    assert 'id="btnClearSelection"' in source
     assert "function clearSelection()" in source
+    assert "if(best)selectNode(best);else clearSelection();" in source
     assert "selected=byId.get(dataSelectedId())||null" in source
     assert "selected=byId.get(dataSelectedId())||nodes.reduce" not in source
 

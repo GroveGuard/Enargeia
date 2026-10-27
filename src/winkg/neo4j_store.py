@@ -68,7 +68,6 @@ class Neo4jStore:
             "CREATE CONSTRAINT kg_extraction_cache_id IF NOT EXISTS FOR (n:KGExtractionCache) REQUIRE n.id IS UNIQUE",
             "CREATE CONSTRAINT kg_analysis_history_summary_id IF NOT EXISTS FOR (n:KGAnalysisHistorySummary) REQUIRE n.id IS UNIQUE",
             "CREATE CONSTRAINT kg_consolidated_fact_id IF NOT EXISTS FOR (n:KGConsolidatedFact) REQUIRE n.id IS UNIQUE",
-            "CREATE CONSTRAINT kg_quality_profile_id IF NOT EXISTS FOR (n:KGQualityProfile) REQUIRE n.id IS UNIQUE",
             "CREATE CONSTRAINT kg_quality_decision_id IF NOT EXISTS FOR (n:KGQualityDecision) REQUIRE n.id IS UNIQUE",
         ]
         indexes = [
@@ -253,6 +252,11 @@ class Neo4jStore:
                 "WHERE NOT EXISTS { MATCH (:KGFile)-[:KG_HAS_CONTENT_IDENTITY]->(g) } "
                 "WITH g DETACH DELETE g RETURN count(g) AS deleted"
             ),
+            "orphan_quality_decisions_deleted": (
+                "MATCH (d:KGQualityDecision) "
+                "WHERE NOT EXISTS { MATCH (:KGLinkCandidate)-[:KG_HAS_QUALITY_DECISION]->(d) } "
+                "WITH d DETACH DELETE d RETURN count(d) AS deleted"
+            ),
             "orphan_extraction_assertions_deleted": (
                 "MATCH (a:KGAssertion) WHERE a.method = 'llm_entity_extraction' "
                 "AND NOT EXISTS { MATCH (a)-[:KG_ASSERTED_FROM]->(:KGChunk) } "
@@ -299,11 +303,14 @@ class Neo4jStore:
         The most recent analysis runs are retained per indexed root (and separately
         for global analyses). Older runs are rolled into one singleton summary node.
         Only explicitly derived/stale nodes and unreviewed stale candidates are
-        removed; accepted assertions, evidence, files, chunks and extraction cache
-        entries are deliberately preserved.
+        removed; accepted assertions, evidence, files, chunks and recent extraction
+        cache entries are preserved.
         """
         keep_analysis_runs = max(1, min(int(keep_analysis_runs), 100))
         result: dict[str, int] = {}
+        retention_days = getattr(
+            getattr(self, "settings", None), "extraction_cache_retention_days", 90
+        )
 
         if cleanup_orphans:
             result.update(self._cleanup_graph_intelligence_orphans())
@@ -359,6 +366,16 @@ class Neo4jStore:
         for key, query in stale_cleanup_queries.items():
             rows = self._run(query, {})
             result[key] = self._first_count(rows)
+
+        result["old_extraction_cache_deleted"] = 0
+        if retention_days > 0:
+            cache_rows = self._run(
+                "MATCH (c:KGExtractionCache) "
+                "WHERE coalesce(c.last_used_at, c.created_at) < datetime() - duration({days: $days}) "
+                "WITH c DETACH DELETE c RETURN count(c) AS deleted",
+                {"days": retention_days},
+            )
+            result["old_extraction_cache_deleted"] = self._first_count(cache_rows)
 
         # A process can be force-closed while a run is still marked running. Age
         # out only clearly abandoned runs (24h) so they can enter the normal retention
@@ -490,7 +507,8 @@ class Neo4jStore:
             "RETURN f.relative_path AS relative_path, f.size AS size, f.mtime_ns AS mtime_ns, "
             "f.sha256 AS sha256, f.status AS status, f.chunks_count AS chunks_count, "
             "f.is_truncated AS is_truncated, f.needs_deep_analysis AS needs_deep_analysis, "
-            "f.total_chunks AS total_chunks, f.omitted_chunks AS omitted_chunks",
+            "f.total_chunks AS total_chunks, f.omitted_chunks AS omitted_chunks, "
+            "f.entity_extraction_pending AS entity_extraction_pending",
             {"root_id": root_id},
         )
         return {str(row["relative_path"]): row for row in rows}
@@ -602,6 +620,7 @@ class Neo4jStore:
             "indexed_chunks": int(metadata.get("indexed_chunks", len(chunks))),
             "omitted_chunks": int(metadata.get("omitted_chunks", 0)),
             "needs_deep_analysis": bool(metadata.get("needs_deep_analysis", False)),
+            "entity_extraction_pending": metadata.get("entity_extraction_pending"),
             "truncation_reason": str(metadata.get("truncation_reason", "")),
             "original_text_chars": int(metadata.get("original_text_chars", 0)),
             "indexed_text_chars": int(metadata.get("indexed_text_chars", 0)),
@@ -690,43 +709,9 @@ class Neo4jStore:
             "deleted_folders": int(stale_folders[0]["deleted"]) if stale_folders else 0,
         }
 
-    def _quality_threshold(self, method: str) -> float:
-        """Read a conservative learned threshold from Neo4j, falling back to config."""
-        default = float(getattr(getattr(self, "settings", None), "quality_min_confidence", 0.82))
-        try:
-            rows = self._run(
-                "MATCH (p:KGQualityProfile {id: $id}) RETURN p.threshold AS threshold LIMIT 1",
-                {"id": method},
-            )
-            if rows and rows[0].get("threshold") is not None:
-                return max(default, min(0.95, float(rows[0]["threshold"])))
-        except Exception as exc:
-            log.debug("Qualitätsschwelle konnte nicht geladen werden (%s): %s", method, exc)
-        return default
-
-    def _record_quality_outcomes(self, method: str, outcomes: list[dict[str, Any]]) -> None:
-        """Persist audited validation results; repeated failures can only raise thresholds."""
-        if not outcomes:
-            return
-        rows = [{"valid": bool(x.get("valid")), "reason": str(x.get("reason", ""))[:100]} for x in outcomes]
-        base = float(getattr(getattr(self, "settings", None), "quality_min_confidence", 0.82))
-        self._run(
-            "UNWIND $outcomes AS item "
-            "MERGE (p:KGQualityProfile {id: $method}) "
-            "ON CREATE SET p.threshold = $base, p.created_at = datetime(), "
-            "p.validation_count = 0, p.validation_passes = 0, p.validation_failures = 0 "
-            "WITH p, item, coalesce(p.validation_count, 0) + 1 AS validations, "
-            "coalesce(p.validation_passes, 0) + CASE WHEN item.valid THEN 1 ELSE 0 END AS passes, "
-            "coalesce(p.validation_failures, 0) + CASE WHEN item.valid THEN 0 ELSE 1 END AS failures "
-            "SET p.validation_count = validations, p.validation_passes = passes, p.validation_failures = failures, "
-            "p.failure_rate = toFloat(failures) / validations, "
-            "p.threshold = CASE WHEN validations >= 10 AND validations % 10 = 0 "
-            "AND toFloat(failures) / validations >= 0.20 "
-            "THEN CASE WHEN coalesce(p.threshold, $base) + 0.02 > 0.95 THEN 0.95 ELSE coalesce(p.threshold, $base) + 0.02 END "
-            "ELSE coalesce(p.threshold, $base) END, "
-            "p.last_validation_reason = item.reason, p.updated_at = datetime()",
-            {"method": method, "outcomes": rows, "base": base},
-        )
+    def _quality_threshold(self) -> float:
+        """Return the configured confidence threshold without adapting it from graph data."""
+        return float(getattr(getattr(self, "settings", None), "quality_min_confidence", 0.82))
 
     def save_entities_for_chunk(self, root_id: str, chunk_id: str,
                                 entities: list[dict[str, Any]],
@@ -781,9 +766,8 @@ class Neo4jStore:
             "MATCH (e:KGEntity {id: item.id}) MERGE (c)-[:KG_MENTIONS]->(e)",
             {"chunk_id": chunk_id, "entities": mentions},
         )
-        threshold = self._quality_threshold("source_extraction")
+        threshold = self._quality_threshold()
         relation_rows: list[dict[str, Any]] = []
-        quality_outcomes: list[dict[str, Any]] = []
         for relation in relations:
             source_name = str(relation.get("source", "")).strip()
             target_name = str(relation.get("target", "")).strip()
@@ -801,13 +785,11 @@ class Neo4jStore:
                 text=source_text or "", source=source_name, target=target_name,
                 evidence=evidence, confidence=confidence, polarity=polarity,
                 valid_from=valid_from, valid_until=valid_until,
-                min_confidence=threshold,
+                min_confidence=threshold, relation_type=relation_type,
             ) if source_text else {
                 "accepted": False, "reason": "source_text_unavailable",
                 "confidence": 0.0, "polarity": "unknown",
             }
-            if source_text is not None:
-                quality_outcomes.append({"valid": bool(validation["accepted"]), "reason": validation["reason"]})
             canonical_source = canonical_by_name.get(source_name.casefold(), stable_id("canonical-entity", source_name.casefold()))
             canonical_target = canonical_by_name.get(target_name.casefold(), stable_id("canonical-entity", target_name.casefold()))
             assertion_id = stable_id(
@@ -858,12 +840,6 @@ class Neo4jStore:
             fact_ids = sorted({row["fact_id"] for row in relation_rows if row["status"] == "accepted"})
             for fact_id in fact_ids:
                 self._refresh_consolidated_fact(fact_id)
-        if quality_outcomes:
-            try:
-                self._record_quality_outcomes("source_extraction", quality_outcomes)
-            except Exception as exc:
-                log.debug("Qualitätsprofil für Quellrelationen konnte nicht aktualisiert werden: %s", exc)
-
     def _refresh_consolidated_fact(self, fact_id: str) -> dict[str, Any]:
         """Aggregate independent evidence and suppress active links on contradiction."""
         rows = self._run(
@@ -959,8 +935,7 @@ class Neo4jStore:
         self, candidate_id: str, *, decision: str, predicate: str = "RELATED_TO",
         evidence: str = "", evidence_chunk_id: str = "", confidence: float = 0.0,
         polarity: str = "unknown", valid_from: str = "", valid_until: str = "",
-        reason: str = "", min_confidence: float | None = None,
-        source_snapshot: list[dict[str, Any]] | None = None,
+        reason: str = "", source_snapshot: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Finalize an LLM decision only after re-reading and verifying source chunks."""
         rows = self._run(
@@ -1026,10 +1001,7 @@ class Neo4jStore:
                  "confidence": parse_confidence(confidence)},
             )
             return {"id": candidate_id, "status": "deferred", "reason": reason}
-        threshold = max(
-            float(min_confidence if min_confidence is not None else getattr(self.settings, "quality_min_confidence", 0.82)),
-            self._quality_threshold("candidate_review"),
-        )
+        threshold = self._quality_threshold()
         sources = [source for source in (row.get("sources") or []) if source and source.get("id") and source.get("text")]
         selected = next((source for source in sources if source.get("id") == evidence_chunk_id), None)
         if not selected:
@@ -1041,7 +1013,7 @@ class Neo4jStore:
                 text=str(selected.get("text", "")), source=str(row.get("subject_name", "")),
                 target=str(row.get("object_name", "")), evidence=evidence, confidence=confidence,
                 polarity=polarity, valid_from=valid_from, valid_until=valid_until,
-                min_confidence=threshold,
+                min_confidence=threshold, relation_type=str(predicate or "RELATED_TO"),
             )
         if not validation.get("accepted"):
             final_reason = str(validation.get("reason") or "source_validation_failed")
@@ -1057,10 +1029,6 @@ class Neo4jStore:
                  "confidence": parse_confidence(confidence),
                  "evidence": str(evidence)[:500], "chunk_id": selected.get("id") if selected else None},
             )
-            try:
-                self._record_quality_outcomes("candidate_review", [{"valid": False, "reason": final_reason}])
-            except Exception:
-                pass
             return {"id": candidate_id, "status": "deferred", "reason": final_reason}
         assertion_id = stable_id("autonomous-assertion", candidate_id, selected["id"], predicate, evidence)
         fact_id = stable_id(
@@ -1103,10 +1071,6 @@ class Neo4jStore:
         if not saved:
             return {"id": candidate_id, "status": "deferred", "reason": "candidate_or_source_changed_during_review"}
         refresh = self._refresh_consolidated_fact(fact_id)
-        try:
-            self._record_quality_outcomes("candidate_review", [{"valid": True, "reason": "evidence_validated"}])
-        except Exception:
-            pass
         return {"id": candidate_id, "status": "accepted", "assertion_id": assertion_id, "fact": refresh}
 
     def vector_search(self, query_vector: list[float], limit: int,

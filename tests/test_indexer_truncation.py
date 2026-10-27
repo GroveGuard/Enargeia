@@ -22,6 +22,7 @@ from winkg.indexer import DirectoryIndexer
 class FakeStore:
     def __init__(self) -> None:
         self.saved: dict[str, Any] | None = None
+        self.file_states: dict[str, dict[str, Any]] = {}
         self.extraction_cache: dict[str, dict[str, Any]] = {}
         self.entity_saves: list[tuple[str, list[dict[str, str]], list[dict[str, str]]]] = []
 
@@ -41,7 +42,7 @@ class FakeStore:
         pass
 
     def get_file_state(self, root_id: str) -> dict[str, dict[str, Any]]:
-        return {}
+        return self.file_states
 
     def get_entity_extraction_cache_many(self, cache_ids: list[str]) -> dict[str, dict[str, Any]]:
         return {cache_id: self.extraction_cache[cache_id] for cache_id in cache_ids if cache_id in self.extraction_cache}
@@ -55,6 +56,10 @@ class FakeStore:
                   parent_relative_path: str, metadata: dict[str, Any],
                   chunks: list[dict[str, Any]]) -> None:
         self.saved = {"metadata": metadata, "chunks": chunks}
+        self.file_states[relative_path] = {
+            **metadata,
+            "chunks_count": len(chunks),
+        }
 
     def save_entities_for_chunk(self, root_id: str, chunk_id: str,
                                 entities: list[dict[str, str]],
@@ -148,3 +153,63 @@ def test_entity_extraction_cache_reuses_identical_chunks_across_files(tmp_path: 
     assert result["entity_cache_hits"] == 1
     assert len(store.extraction_cache) == 1
     assert len(store.entity_saves) == 2
+
+
+def test_failed_entity_extraction_retries_on_incremental_scan(tmp_path: Path):
+    source = tmp_path / "retry.txt"
+    source.write_text("Material M-4711 wird im Prozess P-100 verwendet.", encoding="utf-8")
+    settings = replace(get_settings(), entity_extraction_enabled=True, chunk_size=500, chunk_overlap=20)
+    store = FakeStore()
+    indexer = DirectoryIndexer(settings, store=store)
+    calls = 0
+
+    def fail_once(value: str) -> dict[str, list[dict[str, str]]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("invalid JSON response")
+        return {
+            "entities": [{"name": "M-4711", "type": "Produkt", "description": "Material"}],
+            "relations": [],
+        }
+
+    indexer.entity_extractor.extract = fail_once  # type: ignore[method-assign]
+    first = indexer.index(tmp_path, no_embeddings=True)
+    assert first["entity_llm_calls"] == 1
+    assert store.file_states["retry.txt"]["entity_extraction_pending"] is True
+
+    second = indexer.index(tmp_path, no_embeddings=True)
+    assert second["entity_extraction_retry_files"] == 1
+    assert second["entity_llm_calls"] == 1
+    assert store.file_states["retry.txt"]["entity_extraction_pending"] is False
+    assert calls == 2
+
+    third = indexer.index(tmp_path, no_embeddings=True)
+    assert third["unchanged"] == 1
+    assert third["entity_llm_calls"] == 0
+    assert calls == 2
+
+
+def test_legacy_index_without_extraction_state_gets_entity_extraction(tmp_path: Path):
+    source = tmp_path / "legacy.txt"
+    source.write_text("Material M-4711 wird im Prozess P-100 verwendet.", encoding="utf-8")
+    settings = replace(get_settings(), entity_extraction_enabled=False, chunk_size=500, chunk_overlap=20)
+    store = FakeStore()
+    indexer = DirectoryIndexer(settings, store=store)
+    indexer.index(tmp_path, no_embeddings=True)
+    assert store.file_states["legacy.txt"]["entity_extraction_pending"] is None
+
+    indexer.settings = replace(settings, entity_extraction_enabled=True)
+    calls: list[str] = []
+
+    def fake_extract(value: str) -> dict[str, list[dict[str, str]]]:
+        calls.append(value)
+        return {"entities": [], "relations": []}
+
+    indexer.entity_extractor.extract = fake_extract  # type: ignore[method-assign]
+    result = indexer.index(tmp_path, no_embeddings=True)
+
+    assert result["entity_extraction_retry_files"] == 1
+    assert result["entity_llm_calls"] == 1
+    assert store.file_states["legacy.txt"]["entity_extraction_pending"] is False
+    assert len(calls) == 1

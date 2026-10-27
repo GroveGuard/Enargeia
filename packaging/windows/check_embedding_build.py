@@ -14,6 +14,7 @@ def main() -> int:
         import onnxruntime
         import fastembed
         import pymupdf
+        import rapidocr
         import latex2mathml
         import docling
         from fastembed import TextEmbedding
@@ -45,6 +46,11 @@ def main() -> int:
         )
         if not latex2mathml_data.is_file():
             raise RuntimeError(f"latex2mathml data is missing: {latex2mathml_data}")
+        rapidocr_models = (
+            Path(rapidocr.__file__).resolve().parent / "default_models.yaml"
+        )
+        if not rapidocr_models.is_file():
+            raise RuntimeError(f"RapidOCR model configuration is missing: {rapidocr_models}")
         flet_version = version("flet")
         if flet_version != "1.0.5":
             raise RuntimeError(
@@ -73,6 +79,7 @@ def main() -> int:
         print(f"Execution providers: {', '.join(providers)}")
         print(f"PyMuPDF layout data: {layout_data}")
         print(f"latex2mathml data: {latex2mathml_data}")
+        print(f"RapidOCR model configuration: {rapidocr_models}")
         return 0
     except Exception as exc:
         print(f"Build runtime dependency preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr)

@@ -45,6 +45,7 @@ $GuiArgs = $Common + @(
   '--hidden-import','flet_desktop','--copy-metadata','flet','--copy-metadata','flet-desktop',
   '--collect-all','fastembed','--collect-binaries','onnxruntime','--collect-data','onnxruntime',
   '--collect-all','docling','--collect-all','docling_core','--collect-all','docling_parse','--collect-all','docling_ibm_models',
+  '--collect-all','rapidocr','--copy-metadata','rapidocr',
   '--collect-all','latex2mathml',
   '--collect-all','huggingface_hub','--collect-all','tokenizers','--collect-all','tqdm','--collect-all','pymupdf',
   '--hidden-import','fastembed','--hidden-import','fastembed.text.text_embedding',
@@ -115,6 +116,16 @@ if ($Latex2MathMLData.Count -eq 0) {
   throw 'Generated GUI bundle is missing latex2mathml data (unimathsymbols.txt). Installer will not be created.'
 }
 Write-Host "latex2mathml data verified in: $($Latex2MathMLData[0])" -ForegroundColor Green
+
+$RapidOcrModels = @(
+  Get-ChildItem -Path $AppBundle -File -Filter 'default_models.yaml' -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.Directory.Name -eq 'rapidocr' } |
+    Select-Object -ExpandProperty FullName
+)
+if ($RapidOcrModels.Count -eq 0) {
+  throw 'Generated GUI bundle is missing RapidOCR model configuration (rapidocr/default_models.yaml). Installer will not be created.'
+}
+Write-Host "RapidOCR model configuration verified in: $($RapidOcrModels[0])" -ForegroundColor Green
 
 $GraphArgs = $Common + @(
   '--windowed','--name','Enargeia3D',

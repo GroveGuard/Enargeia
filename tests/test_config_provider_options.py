@@ -25,6 +25,23 @@ def test_fresh_configuration_defaults_to_local_embeddings_without_llm(monkeypatc
     assert settings.llm_enabled is False
     assert settings.community_summaries_enabled is False
     assert settings.global_search_enabled is False
+    assert settings.extraction_cache_retention_days == 90
+
+
+def test_extraction_cache_retention_allows_zero_and_rejects_negative(monkeypatch, tmp_path: Path):
+    env_file = tmp_path / "settings.env"
+    monkeypatch.setattr(config, "ENV_FILE", env_file)
+
+    env_file.write_text("EXTRACTION_CACHE_RETENTION_DAYS=0\n", encoding="utf-8")
+    assert config.get_settings().extraction_cache_retention_days == 0
+
+    env_file.write_text("EXTRACTION_CACHE_RETENTION_DAYS=-1\n", encoding="utf-8")
+    try:
+        config.get_settings()
+    except ValueError as exc:
+        assert "EXTRACTION_CACHE_RETENTION_DAYS" in str(exc)
+    else:
+        raise AssertionError("Negative cache retention should be rejected.")
 
 
 def test_update_config_roundtrips_values_and_preserves_unrelated_settings(monkeypatch, tmp_path: Path):

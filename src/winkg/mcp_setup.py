@@ -56,8 +56,9 @@ def server_launch() -> tuple[str, list[str], dict[str, str]]:
 
     project_root = Path(__file__).resolve().parents[2]
     current_pythonpath = os.environ.get("PYTHONPATH", "")
+    source_root = project_root / "src"
     pythonpath = (
-        str(project_root) + (os.pathsep + current_pythonpath if current_pythonpath else "")
+        str(source_root) + (os.pathsep + current_pythonpath if current_pythonpath else "")
     )
     return sys.executable, ["-m", "winkg.mcp_server"], {
         "PYTHONPATH": pythonpath,

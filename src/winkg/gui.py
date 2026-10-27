@@ -99,6 +99,7 @@ def _settings_preview() -> dict[str, str]:
         "GDS max. KNN-Textabschnitte": str(settings.gds_max_knn_chunks),
         "Max. Chunks je Datei": str(settings.max_chunks_per_file),
         "Max. Dateigröße (MB)": str(settings.max_file_size_mb),
+        "Aufbewahrung Extraktions-Cache (Tage)": str(settings.extraction_cache_retention_days),
         "LLM-Modell für Extraktion": settings.llm_model,
         "LLM-Endpunkt für Extraktion": settings.llm_base_url,
     }

@@ -58,6 +58,57 @@ def test_negative_evidence_can_be_saved_but_is_not_positive_relation():
     assert result["polarity"] == "negative"
 
 
+def test_entities_must_be_in_quote_or_nearby_in_same_sentence_or_line():
+    quoted = validate_relation_evidence(
+        text="System A uses Process B. Another sentence follows.",
+        source="system a", target="PROCESS B", evidence="System A uses Process B",
+        confidence=0.93, polarity="positive", min_confidence=0.82,
+    )
+    nearby = validate_relation_evidence(
+        text="System A and Process B are connected. Evidence confirms this relationship.",
+        source="System A", target="Process B", evidence="Evidence confirms this relationship",
+        confidence=0.93, polarity="positive", min_confidence=0.82,
+    )
+    far_apart = validate_relation_evidence(
+        text="System A appears here. " + ("filler " * 60) + "Evidence confirms this relationship. "
+        + ("filler " * 60) + "Process B appears far away.",
+        source="System A", target="Process B", evidence="Evidence confirms this relationship",
+        confidence=0.93, polarity="positive", min_confidence=0.82,
+    )
+    separate_lines = validate_relation_evidence(
+        text="System A is discussed here.\nEvidence confirms this relationship.\nProcess B is elsewhere.",
+        source="System A", target="Process B", evidence="Evidence confirms this relationship",
+        confidence=0.93, polarity="positive", min_confidence=0.82,
+    )
+
+    assert quoted["accepted"]
+    assert nearby["accepted"]
+    assert not far_apart["accepted"]
+    assert far_apart["reason"] == "entities_not_near_evidence"
+    assert not separate_lines["accepted"]
+    assert separate_lines["reason"] == "entities_not_near_evidence"
+
+
+def test_generic_entities_and_relation_type_are_never_auto_activated():
+    generic_entity = validate_relation_evidence(
+        text="A1 uses Process B.", source="A1", target="Process B", evidence="A1 uses Process B",
+        confidence=0.99, polarity="positive",
+    )
+    numeric_entity = validate_relation_evidence(
+        text="123 uses Process B.", source="123", target="Process B", evidence="123 uses Process B",
+        confidence=0.99, polarity="positive",
+    )
+    generic_relation = validate_relation_evidence(
+        text="System A relates to Process B.", source="System A", target="Process B",
+        evidence="System A relates to Process B", confidence=0.99, polarity="positive",
+        relation_type="related_to",
+    )
+
+    assert generic_entity["reason"] == "entity_name_too_generic"
+    assert numeric_entity["reason"] == "entity_name_too_generic"
+    assert generic_relation["reason"] == "relation_type_too_generic"
+
+
 def test_expired_and_future_claims_are_not_activated():
     expired = validate_relation_evidence(
         text="System A uses Process B.", source="System A", target="Process B",
@@ -89,20 +140,19 @@ def test_source_extraction_promotes_only_when_original_source_text_is_passed():
     assert relation_call[1]["relations"][0]["status"] == "accepted"
     assert relation_call[1]["relations"][0]["method"] == "auto_source_evidence"
     assert "KGConsolidatedFact" in relation_call[0]
+    assert not any("KGQualityProfile" in query for query, _ in calls)
 
 
-def test_quality_profile_threshold_adjustment_is_bounded_to_ten_validation_batches():
+def test_quality_threshold_uses_only_configured_setting():
     store = Neo4jStore.__new__(Neo4jStore)
-    calls = []
     store.settings = SimpleNamespace(quality_min_confidence=0.82)
-    store._run = lambda query, parameters=None: calls.append((query, parameters or {})) or []  # type: ignore[method-assign]
 
-    store._record_quality_outcomes("source_extraction", [{"valid": False, "reason": "bad evidence"}])
+    def unexpected_query(*args, **kwargs):
+        raise AssertionError("Neo4j must not be queried")
 
-    query, params = calls[0]
-    assert "validations % 10 = 0" in query
-    assert "THEN 0.95" in query
-    assert params["base"] == 0.82
+    store._run = unexpected_query  # type: ignore[method-assign]
+
+    assert store._quality_threshold() == 0.82
 
 
 def test_candidate_review_is_aborted_when_source_hash_changed_during_llm_call():

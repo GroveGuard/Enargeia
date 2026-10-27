@@ -44,6 +44,7 @@ ADVANCED = {
     "CHUNK_OVERLAP": ("Überlappung der Textabschnitte", "220", "int"),
     "MAX_CHUNKS_PER_FILE": ("Max. Textabschnitte je Datei", "500", "int"),
     "MAX_FILE_SIZE_MB": ("Max. Dateigröße (MB)", "80", "int"),
+    "EXTRACTION_CACHE_RETENTION_DAYS": ("Aufbewahrung Extraktions-Cache (Tage, 0 = deaktiviert)", "90", "int"),
     "GDS_MAX_ENTITY_NODES": ("GDS-Limit: Entitätsknoten", "50000", "int"),
     "GDS_MAX_NODE_SIMILARITY_NODES": ("GDS-Limit: Similarity-Knoten", "15000", "int"),
     "GDS_MAX_KNN_CHUNKS": ("GDS-Limit: KNN-Textabschnitte", "10000", "int"),
@@ -131,6 +132,7 @@ def run_setup_wizard() -> bool:
             field_group("Indexierung und Verarbeitung", [
                 controls["CHUNK_SIZE"], controls["CHUNK_OVERLAP"],
                 controls["MAX_CHUNKS_PER_FILE"], controls["MAX_FILE_SIZE_MB"],
+                controls["EXTRACTION_CACHE_RETENTION_DAYS"],
             ]),
             field_group("Dateien und Datenschutz", [
                 controls["EXTRA_EXCLUDED_DIRS"], controls["INCLUDE_SENSITIVE_FILES"],
@@ -255,7 +257,9 @@ def run_setup_wizard() -> bool:
                         kind = ADVANCED[key][2]
                         if kind == "int":
                             numeric = int(value)
-                            minimum = 0 if key in {"EMBEDDING_THREADS", "CHUNK_OVERLAP"} else 1
+                            minimum = 0 if key in {
+                                "EMBEDDING_THREADS", "CHUNK_OVERLAP", "EXTRACTION_CACHE_RETENTION_DAYS"
+                            } else 1
                             if numeric < minimum:
                                 raise ValueError(f"{key} muss mindestens {minimum} sein.")
                         elif kind == "float":
@@ -374,6 +378,5 @@ def run_setup_wizard() -> bool:
 
     ft.run(main)
     return saved["value"]
-
 
 

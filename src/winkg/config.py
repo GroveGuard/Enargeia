@@ -105,6 +105,7 @@ class Settings:
     embedding_batch_size: int = 32
     max_file_size_mb: int = 80
     max_chunks_per_file: int = 500
+    extraction_cache_retention_days: int = 90
     gds_max_entity_nodes: int = 50000
     gds_max_node_similarity_nodes: int = 15000
     gds_max_knn_chunks: int = 10000
@@ -207,6 +208,7 @@ def get_settings() -> Settings:
         embedding_batch_size=_int(values, "EMBEDDING_BATCH_SIZE", 32, 1),
         max_file_size_mb=_int(values, "MAX_FILE_SIZE_MB", 80, 1),
         max_chunks_per_file=_int(values, "MAX_CHUNKS_PER_FILE", 500, 1),
+        extraction_cache_retention_days=_int(values, "EXTRACTION_CACHE_RETENTION_DAYS", 90, 0),
         gds_max_entity_nodes=_int(values, "GDS_MAX_ENTITY_NODES", 50000, 100),
         gds_max_node_similarity_nodes=_int(values, "GDS_MAX_NODE_SIMILARITY_NODES", 15000, 100),
         gds_max_knn_chunks=_int(values, "GDS_MAX_KNN_CHUNKS", 10000, 100),

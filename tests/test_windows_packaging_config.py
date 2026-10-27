@@ -42,7 +42,14 @@ def test_windows_build_installs_and_bundles_docling():
     assert "unimathsymbols.txt" in script
     assert "collect_all('latex2mathml')" in spec
     assert "'--copy-metadata','docling-slim'" in script
+    assert "'--collect-all','rapidocr'" in script
+    assert "'--copy-metadata','rapidocr'" in script
+    assert "rapidocr/default_models.yaml" in script
+    assert "copy_metadata('rapidocr')" in spec
+    assert "collect_all('rapidocr')" in spec
     assert "from docling.document_converter import DocumentConverter" in helper
+    assert "import rapidocr" in helper
+    assert 'Path(rapidocr.__file__).resolve().parent / "default_models.yaml"' in helper
     assert "latex2mathml_data" in helper
     assert 'version("docling")' in helper
 

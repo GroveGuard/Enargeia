@@ -284,7 +284,6 @@ class GraphIntelligence:
                         valid_from=str(decision.get("valid_from") or ""),
                         valid_until=str(decision.get("valid_until") or ""),
                         reason=str(decision.get("reason") or "LLM autonomous review"),
-                        min_confidence=float(getattr(settings, "quality_min_confidence", 0.82)),
                         source_snapshot=[{"id": source.get("id"), "sha256": source.get("sha256")}
                                          for source in row.get("sources", []) if source and source.get("id")],
                     )
@@ -1468,4 +1467,3 @@ class GraphIntelligence:
             row["status"] = decision
             row["review_note"] = note
         return row
-

@@ -174,6 +174,10 @@ In an installed Windows environment, configuration, model cache, runtime data, a
 | Local models | `%LOCALAPPDATA%\Enargeia\models` |
 | Logs | `%LOCALAPPDATA%\Enargeia\logs` |
 
+`EXTRACTION_CACHE_RETENTION_DAYS` controls how long extraction-cache entries are
+kept (default: 90 days). Set it to `0` to disable cache cleanup; negative values
+are invalid.
+
 These directories are outside the program folder and are separate from the build artifacts. When reinstalling or uninstalling the application, remove data directories only deliberately and after making a backup.
 
 ## System Requirements
@@ -262,4 +266,4 @@ pyproject.toml                   Version, dependencies, and entry points
 
 ## Project Status
 
-It is defined in `pyproject.toml`, `src/winkg/__init__.py`, and the Windows installer configuration.
+The project version is **1.2.1**. It is defined in `pyproject.toml`, `src/winkg/__init__.py`, and the Windows installer configuration.

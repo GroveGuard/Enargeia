@@ -181,8 +181,8 @@ def test_dashboard_statistics_toggle_is_in_the_top_section_not_below_status():
     dashboard = source.split("    def build_dashboard_view() -> ft.Control:", 1)[1].split("    # ---------------- Scan view ----------------", 1)[0]
     assert "return ft.Column(" in dashboard
     assert 'ft.Text("GRAPH AT A GLANCE"' in dashboard
-    assert "graph_stats_toggle," in dashboard
-    assert dashboard.index("graph_stats_toggle,") < dashboard.index("primary_stats,")
+    toggle_position = dashboard.index("ft.Row(controls=[graph_stats_toggle])")
+    assert toggle_position < dashboard.index("operation_status,")
     assert dashboard.index("graph_stats,") < dashboard.index("operation_status,")
     assert '"Erweiterte Statistik anzeigen"' in dashboard
     assert "ft.ExpansionTile(" not in dashboard
@@ -227,6 +227,6 @@ def test_fastembed_download_progress_is_visible_in_connection_and_scan_views():
     assert "scan_embedding_progress_panel" in source
     assert "ft.ProgressBar(value=None" in source
     assert "refresh_embedding_progress_controls()" in source
-    assert "asyncio.to_thread(_run_doctor, True, publish_embedding_progress)" in source
+    assert "asyncio.to_thread(_run_embedding_test, publish_embedding_progress)" in source
     assert "DirectoryIndexer(settings, embedding_progress_callback=publish_embedding_progress)" in source
     assert "Modell herunterladen" in source or "Modell-Dateien werden heruntergeladen" in source

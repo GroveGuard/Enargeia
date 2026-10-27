@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 from winkg.neo4j_store import Neo4jStore
@@ -58,6 +59,63 @@ def test_cleanup_targets_only_stale_derived_data_and_reviewable_proposals():
     assert "KGAnalysisHistorySummary" in all_queries
     assert not any("MATCH (a:KGAssertion) DETACH DELETE a" in query for query, _ in calls)
     assert not any("MATCH (chunk:KGChunk) DETACH DELETE" in query for query, _ in calls)
+
+
+def test_orphan_quality_decisions_cleanup_only_targets_disconnected_decisions():
+    store = Neo4jStore.__new__(Neo4jStore)
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run(query: str, parameters: dict[str, Any] | None = None):
+        calls.append((query, parameters or {}))
+        return [{"deleted": 0}]
+
+    store._run = fake_run  # type: ignore[method-assign]
+    store._cleanup_graph_intelligence_orphans()
+
+    decision_query = next(query for query, _ in calls if "MATCH (d:KGQualityDecision)" in query)
+    assert "NOT EXISTS { MATCH (:KGLinkCandidate)-[:KG_HAS_QUALITY_DECISION]->(d) }" in decision_query
+    assert "WITH d DETACH DELETE d RETURN count(d) AS deleted" in decision_query
+
+
+def test_extraction_cache_cleanup_is_disabled_when_retention_is_zero():
+    store = Neo4jStore.__new__(Neo4jStore)
+    store.settings = SimpleNamespace(extraction_cache_retention_days=0)
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run(query: str, parameters: dict[str, Any] | None = None):
+        calls.append((query, parameters or {}))
+        if "RETURN coalesce(s.archived_runs_total" in query:
+            return [{"archived_runs_total": 0, "archived_insights_total": 0}]
+        return [{"deleted": 0}]
+
+    store._run = fake_run  # type: ignore[method-assign]
+    result = store.cleanup_graph_maintenance()
+
+    assert result["old_extraction_cache_deleted"] == 0
+    assert not any("KGExtractionCache" in query for query, _ in calls)
+
+
+def test_extraction_cache_cleanup_passes_configured_retention_days():
+    store = Neo4jStore.__new__(Neo4jStore)
+    store.settings = SimpleNamespace(extraction_cache_retention_days=30)
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run(query: str, parameters: dict[str, Any] | None = None):
+        calls.append((query, parameters or {}))
+        if "KGExtractionCache" in query:
+            return [{"deleted": 2}]
+        if "RETURN coalesce(s.archived_runs_total" in query:
+            return [{"archived_runs_total": 0, "archived_insights_total": 0}]
+        return [{"deleted": 0}]
+
+    store._run = fake_run  # type: ignore[method-assign]
+    result = store.cleanup_graph_maintenance()
+
+    cache_call = next((query, params) for query, params in calls if "KGExtractionCache" in query)
+    assert cache_call[1] == {"days": 30}
+    assert "coalesce(c.last_used_at, c.created_at)" in cache_call[0]
+    assert "duration({days: $days})" in cache_call[0]
+    assert result["old_extraction_cache_deleted"] == 2
 
 
 def test_cleanup_archives_expired_analysis_runs_into_one_summary_node():

@@ -30,6 +30,36 @@ def entity_is_mentioned(text: str, name: str) -> bool:
     return re.search(pattern, normalize_text(text), flags=re.UNICODE) is not None
 
 
+def _entity_name_is_too_generic(name: str) -> bool:
+    normalized = normalize_text(name)
+    return len(normalized) < 3 or re.fullmatch(r"[\d.\-\s]+", normalized) is not None
+
+
+def _entities_are_near_evidence(text: str, source: str, target: str, evidence: str) -> bool:
+    if entity_is_mentioned(evidence, source) and entity_is_mentioned(evidence, target):
+        return True
+
+    evidence_words = str(evidence or "").split()
+    if not evidence_words:
+        return False
+    pattern = r"\s+".join(re.escape(word) for word in evidence_words)
+    match = re.search(pattern, text, flags=re.IGNORECASE | re.UNICODE)
+    if match is None:
+        return False
+
+    nearby = text[max(0, match.start() - 300):min(len(text), match.end() + 300)]
+    lines = re.split(r"[\r\n]+", nearby)
+    contexts = lines + [
+        sentence
+        for line in lines
+        for sentence in re.split(r"(?<=[.!?])\s+", line)
+    ]
+    return any(
+        entity_is_mentioned(context, source) and entity_is_mentioned(context, target)
+        for context in contexts
+    )
+
+
 def parse_confidence(value: Any, default: float = 0.0) -> float:
     try:
         confidence = float(value)
@@ -70,14 +100,19 @@ def validate_relation_evidence(
     *, text: str, source: str, target: str, evidence: str,
     confidence: Any, polarity: Any, valid_from: Any = None,
     valid_until: Any = None, min_confidence: float = 0.82,
+    relation_type: str | None = None,
 ) -> dict[str, Any]:
     """Return deterministic validation decision; LLM judgement alone is not enough."""
     conf = parse_confidence(confidence)
     pol = normalize_polarity(polarity)
     if not quote_is_supported(text, evidence):
         return {"accepted": False, "reason": "evidence_not_verbatim", "confidence": conf, "polarity": pol}
-    if not entity_is_mentioned(text, source) or not entity_is_mentioned(text, target):
-        return {"accepted": False, "reason": "entities_not_both_in_source", "confidence": conf, "polarity": pol}
+    if _entity_name_is_too_generic(source) or _entity_name_is_too_generic(target):
+        return {"accepted": False, "reason": "entity_name_too_generic", "confidence": conf, "polarity": pol}
+    if str(relation_type or "").strip().upper() == "RELATED_TO":
+        return {"accepted": False, "reason": "relation_type_too_generic", "confidence": conf, "polarity": pol}
+    if not _entities_are_near_evidence(text, source, target, evidence):
+        return {"accepted": False, "reason": "entities_not_near_evidence", "confidence": conf, "polarity": pol}
     if pol == "unknown":
         return {"accepted": False, "reason": "polarity_uncertain", "confidence": conf, "polarity": pol}
     if conf < min_confidence:
