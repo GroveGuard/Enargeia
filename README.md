@@ -19,10 +19,10 @@ The desktop interface deliberately focuses on **building, managing, quality-assu
 
 ## Screenshots
   <p>
-      <img src="screenshots/enargeia_homescreen.png" alt="Enargeia – Homescreen" width="500">
-      <img src="screenshots/enargeia_3Dscreen.png" alt="Enargeia – Homescreen" width="500">
+      <img src="screenshots/enargeia_homescreen.png" alt="Enargeia – Homescreen" width="720">
+      <img src="screenshots/enargeia_3Dscreen.png" alt="Enargeia – Homescreen" width="720">
+      <img src="screenshots/enargeia_mcpscreen.png" alt="Enargeia – Homescreen" width="720">
   </p>
-      <img src="screenshots/enargeia_mcpscreen.png" alt="Enargeia – Homescreen" width="500">
 
 ## Features
 
