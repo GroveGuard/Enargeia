@@ -17,6 +17,13 @@
 
 The desktop interface deliberately focuses on **building, managing, quality-assuring, and analyzing** the graph. It does not include a chat or RAG interface. Content search and context retrieval are available through the CLI and MCP server for external LLM clients.
 
+## Screenshots
+  <p>
+      <img src="screenshots/enargeia_homescreen.png" alt="Enargeia – Homescreen" width="500">
+      <img src="screenshots/enargeia_3Dscreen.png" alt="Enargeia – Homescreen" width="500">
+  </p>
+      <img src="screenshots/enargeia_mcpscreen.png" alt="Enargeia – Homescreen" width="500">
+
 ## Features
 
 <table>
